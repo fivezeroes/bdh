@@ -83,6 +83,15 @@ def get_batch(split):
 def eval(model):
     model.eval()
 
+    prompt = torch.tensor(
+        bytearray("The Capital of France is ", "utf-8"), dtype=torch.long, device=device
+    ).unsqueeze(0)
+    ret = model.generate(prompt, max_new_tokens=100, top_k=3)
+    ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
+        errors="backslashreplace"
+    )
+
+    print(ret_decoded)
 
 if __name__ == "__main__":
     fetch_data()
@@ -112,12 +121,5 @@ if __name__ == "__main__":
             loss_acc = 0
             loss_steps = 0
     print("Training done, now generating a sample ")
-    model.eval()
-    prompt = torch.tensor(
-        bytearray("To be or ", "utf-8"), dtype=torch.long, device=device
-    ).unsqueeze(0)
-    ret = model.generate(prompt, max_new_tokens=100, top_k=3)
-    ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
-        errors="backslashreplace"
-    )
-    print(ret_decoded)
+    eval(model)
+
