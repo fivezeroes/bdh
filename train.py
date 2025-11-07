@@ -2,6 +2,7 @@
 
 import os
 from contextlib import nullcontext
+from datetime import datetime
 
 import bdh
 import numpy as np
@@ -41,6 +42,7 @@ MAX_ITERS = 3000
 LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
+TEST_FREQ = 500
 
 input_file_path = os.path.join(os.path.dirname(__file__), "input.txt")
 
@@ -117,9 +119,13 @@ if __name__ == "__main__":
         scaler.update()
         optimizer.zero_grad()
         if step % LOG_FREQ == 0:
-            print(f"Step: {step}/{MAX_ITERS} loss {loss_acc.item() / loss_steps:.3}")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{timestamp}] Step: {step}/{MAX_ITERS} loss {loss_acc.item() / loss_steps:.3}")
             loss_acc = 0
             loss_steps = 0
+        if step % TEST_FREQ == 0 and step > 0:
+            eval(model)
+
     print("Training done, now generating a sample ")
     eval(model)
 
