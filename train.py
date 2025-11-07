@@ -10,13 +10,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# On a Mac you can also try
-# device=torch.device('mps')
+device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.mps.is_available() else "cpu")
 
 dtype = (
     "bfloat16"
-    if torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    if (device.type == "cuda" and torch.cuda.is_bf16_supported()) or device.type == "mps"
     else "float16"
 )  # 'float32', 'bfloat16', or 'float16', the latter will auto implement a GradScaler
 ptdtype = {
@@ -31,8 +29,7 @@ ctx = (
 )
 scaler = torch.amp.GradScaler(device=device.type, enabled=(dtype == "float16"))
 torch.manual_seed(1337)
-torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
-torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
+torch.backends.cudnn.conv.fp32_precision = 'tf32'
 print(f"Using device: {device} with dtype {dtype}")
 
 
