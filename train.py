@@ -44,8 +44,9 @@ LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
 TEST_FREQ = 500
+CHECKPOINT_FREQ = 5000
 CHECKPOINT_DIR = "checkpoints"
-RESUME_FROM_CHECKPOINT = "checkpoints/checkpoint_1000.pt"  # Set to checkpoint path to resume, e.g., "checkpoints/checkpoint_1000.pt"
+RESUME_FROM_CHECKPOINT = None  # Set to checkpoint path to resume, e.g., "checkpoints/checkpoint_1000.pt"
 
 # Parquet dataset configuration
 PARQUET_DIR = "/Volumes/Data/fineweb/data/CC-MAIN-2025-26"
@@ -243,10 +244,10 @@ if __name__ == "__main__":
             print(f"[{timestamp}] Step: {step}/{MAX_ITERS} loss {loss_acc.item() / loss_steps:.3}")
             loss_acc = 0
             loss_steps = 0
+        if step % CHECKPOINT_FREQ == 0 and step > 0:
+            save_checkpoint(model, optimizer, step, loss.item())
         if step % TEST_FREQ == 0 and step > 0:
             eval(model)
-            # Save checkpoint at eval frequency
-            save_checkpoint(model, optimizer, step, loss.item())
 
     print("Training done, now generating a sample ")
     eval(model)
