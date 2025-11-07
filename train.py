@@ -44,6 +44,8 @@ LEARNING_RATE = 1e-3
 WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
 TEST_FREQ = 500
+CHECKPOINT_DIR = "checkpoints"
+RESUME_FROM_CHECKPOINT = "checkpoints/checkpoint_1000.pt"  # Set to checkpoint path to resume, e.g., "checkpoints/checkpoint_1000.pt"
 
 # Parquet dataset configuration
 PARQUET_DIR = "/Volumes/Data/fineweb/data/CC-MAIN-2025-26"
@@ -162,6 +164,52 @@ def eval(model):
 
     print(ret_decoded)
 
+
+def save_checkpoint(model, optimizer, step, loss, checkpoint_dir=CHECKPOINT_DIR):
+    """Save model checkpoint."""
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
+    
+    # Get the underlying model if it's been compiled
+    model_to_save = model._orig_mod if hasattr(model, '_orig_mod') else model
+    
+    checkpoint = {
+        'step': step,
+        'model_state_dict': model_to_save.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': loss,
+        'config': BDH_CONFIG,
+        'scaler_state_dict': scaler.state_dict() if dtype == "float16" else None,
+    }
+    
+    torch.save(checkpoint, checkpoint_path)
+    print(f"Checkpoint saved: {checkpoint_path}")
+    
+    return checkpoint_path
+
+
+def load_checkpoint(checkpoint_path, model, optimizer):
+    """Load model checkpoint and return starting step."""
+    if not os.path.exists(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+    
+    print(f"Loading checkpoint from {checkpoint_path}...")
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    
+    # Get the underlying model if it's been compiled
+    model_to_load = model._orig_mod if hasattr(model, '_orig_mod') else model
+    
+    model_to_load.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    
+    if checkpoint.get('scaler_state_dict') is not None and dtype == "float16":
+        scaler.load_state_dict(checkpoint['scaler_state_dict'])
+    
+    start_step = checkpoint['step'] + 1
+    print(f"Resumed from step {checkpoint['step']} (continuing from step {start_step})")
+    
+    return start_step
+
 if __name__ == "__main__":
     fetch_data()
 
@@ -171,11 +219,16 @@ if __name__ == "__main__":
         model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY
     )
 
+    # Resume from checkpoint if specified
+    start_step = 0
+    if RESUME_FROM_CHECKPOINT is not None:
+        start_step = load_checkpoint(RESUME_FROM_CHECKPOINT, model, optimizer)
+
     x, y = get_batch("train")
 
     loss_acc = 0
     loss_steps = 0
-    for step in range(MAX_ITERS):
+    for step in range(start_step, MAX_ITERS):
         with ctx:
             logits, loss = model(x, y)
         x, y = get_batch("train")
@@ -192,7 +245,11 @@ if __name__ == "__main__":
             loss_steps = 0
         if step % TEST_FREQ == 0 and step > 0:
             eval(model)
+            # Save checkpoint at eval frequency
+            save_checkpoint(model, optimizer, step, loss.item())
 
     print("Training done, now generating a sample ")
     eval(model)
+    # Save final checkpoint
+    save_checkpoint(model, optimizer, MAX_ITERS, loss.item())
 
