@@ -3,10 +3,11 @@
 import os
 from contextlib import nullcontext
 from datetime import datetime
+import glob
 
 import bdh
 import numpy as np
-import requests
+import pyarrow.parquet as pq
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -44,41 +45,107 @@ WEIGHT_DECAY = 0.1
 LOG_FREQ = 100
 TEST_FREQ = 500
 
-input_file_path = os.path.join(os.path.dirname(__file__), "input.txt")
+# Parquet dataset configuration
+PARQUET_DIR = "/Volumes/Data/fineweb/data/CC-MAIN-2025-26"
+
+# Global variables for parquet file handling
+parquet_files = []
+parquet_file_cache = {}  # Cache opened parquet files
+MAX_CACHED_FILES = 5  # Keep only a few files open
 
 
-# Fetch the tiny Shakespeare dataset
 def fetch_data():
-    if not os.path.exists(input_file_path):
-        data_url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
-        with open(input_file_path, "w") as f:
-            f.write(requests.get(data_url).text)
+    """Initialize parquet file list."""
+    global parquet_files
+    
+    print(f"Loading parquet file list from {PARQUET_DIR}...")
+    parquet_files = sorted(glob.glob(os.path.join(PARQUET_DIR, "*.parquet")))
+    
+    if not parquet_files:
+        raise FileNotFoundError(f"No parquet files found in {PARQUET_DIR}")
+    
+    print(f"Found {len(parquet_files)} parquet files")
+
+
+def get_parquet_file(file_path):
+    """Get or open a parquet file, with caching."""
+    global parquet_file_cache
+    
+    if file_path not in parquet_file_cache:
+        # If cache is full, remove oldest entry
+        if len(parquet_file_cache) >= MAX_CACHED_FILES:
+            parquet_file_cache.pop(next(iter(parquet_file_cache)))
+        
+        parquet_file_cache[file_path] = pq.ParquetFile(file_path)
+    
+    return parquet_file_cache[file_path]
 
 
 def get_batch(split):
-    # treat the file as bytes
-    data = np.memmap(input_file_path, dtype=np.uint8, mode="r")
+    """Get a batch by randomly sampling from parquet files."""
+    # Determine which files to use based on train/test split
+    split_idx = int(0.9 * len(parquet_files))
     if split == "train":
-        data = data[: int(0.9 * len(data))]
+        available_files = parquet_files[:split_idx]
     else:
-        data = data[int(0.9 * len(data)) :]
-    ix = torch.randint(len(data) - BLOCK_SIZE, (BATCH_SIZE,))
-    x = torch.stack(
-        [torch.from_numpy((data[i : i + BLOCK_SIZE]).astype(np.int64)) for i in ix]
-    )
-    y = torch.stack(
-        [
-            torch.from_numpy((data[i + 1 : i + 1 + BLOCK_SIZE]).astype(np.int64))
-            for i in ix
-        ]
-    )
+        available_files = parquet_files[split_idx:]
+    
+    if not available_files:
+        raise ValueError(f"No files available for split: {split}")
+    
+    # Collect batch samples
+    x_list = []
+    y_list = []
+    
+    for _ in range(BATCH_SIZE):
+        # Randomly select a parquet file
+        file_idx = int(torch.randint(len(available_files), (1,)).item())
+        file_path = available_files[file_idx]
+        pf = get_parquet_file(file_path)
+        
+        # Randomly select a row from the file
+        num_rows = pf.metadata.num_rows
+        row_idx = int(torch.randint(num_rows, (1,)).item())
+        
+        # Read the specific row
+        table = pf.read_row_group(row_idx // 10000, columns=['text'])
+        local_idx = row_idx % 10000
+        if local_idx < len(table):
+            text = table.column('text')[local_idx].as_py()
+        else:
+            # Fallback: read a different row group
+            table = pf.read_row_group(0, columns=['text'])
+            text = table.column('text')[0].as_py()
+        
+        if text is None:
+            text = ""
+        
+        # Convert text to bytes
+        text_bytes = text.encode('utf-8', errors='ignore')
+        
+        # Sample a random sequence of BLOCK_SIZE from this text
+        if len(text_bytes) > BLOCK_SIZE + 1:
+            start_idx = int(torch.randint(len(text_bytes) - BLOCK_SIZE - 1, (1,)).item())
+            seq_bytes = text_bytes[start_idx:start_idx + BLOCK_SIZE + 1]
+        else:
+            # Pad if text is too short
+            seq_bytes = text_bytes + b'\x00' * (BLOCK_SIZE + 1 - len(text_bytes))
+        
+        # Convert to tensors
+        seq_array = np.frombuffer(seq_bytes, dtype=np.uint8).astype(np.int64)
+        x_list.append(torch.from_numpy(seq_array[:BLOCK_SIZE]))
+        y_list.append(torch.from_numpy(seq_array[1:BLOCK_SIZE + 1]))
+    
+    x = torch.stack(x_list)
+    y = torch.stack(y_list)
+    
     if torch.cuda.is_available():
-        # pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
             device, non_blocking=True
         )
     else:
         x, y = x.to(device), y.to(device)
+    
     return x, y
 
 
