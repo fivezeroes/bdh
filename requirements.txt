@@ -1,3 +1,6 @@
 torch
 numpy
 pyarrow
+pyyaml
+bitsandbytes
+transformer-engine[pytorch]

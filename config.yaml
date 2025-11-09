@@ -1,0 +1,72 @@
+# BDH Training Configuration File
+# Copyright Pathway Technology, Inc.
+
+# Model Configuration
+model:
+  n_layer: 6
+  n_embd: 256
+  dropout: 0.1
+  n_head: 4
+  mlp_internal_dim_multiplier: 128
+  vocab_size: 256
+
+# Training Configuration
+training:
+  block_size: 512
+  batch_size: 8
+  max_iters: 3000
+  learning_rate: 1.0e-3
+  weight_decay: 0.1
+  log_freq: 100
+  test_freq: 500
+  checkpoint_freq: 500
+  checkpoint_dir: "checkpoints"
+  resume_from_checkpoint: "checkpoints/checkpoint_1500.pt"  # Set to checkpoint path to resume, e.g., "checkpoints/checkpoint_1000.pt"
+  debug: false
+
+# DataLoader Configuration
+dataloader:
+  num_workers: 4  # Number of worker processes for data loading
+  pin_memory: true  # Speed up CPU->GPU transfer
+  prefetch_factor: 2  # Prefetch 2 batches per worker
+
+# Dataset Configuration
+dataset:
+  parquet_dir: "/Volumes/Data/fineweb/data/CC-MAIN-2025-26"
+  max_cached_files: 5  # Keep only a few parquet files open
+
+# Low-Precision Training Configuration
+# 
+# This model uses nn.Parameter instead of nn.Linear layers, which limits some quantization options.
+# However, we support multiple low-precision training modes:
+# 
+# 1. FP8/FP4 Native Compute (use_fp8: true) - NVIDIA Hopper/Blackwell GPUs:
+#    - Uses hardware FP8 tensor cores for native 8-bit compute (Hopper H100, Blackwell)
+#    - FP4 inference support on Blackwell GPUs
+#    - Requires: pip install transformer-engine
+#    - Best performance on H100/B100 GPUs with minimal accuracy loss
+#    - Recommended for: Hopper/Blackwell GPUs
+# 
+# 2. 4-bit Optimizer (use_4bit_optimizer: true) - Any CUDA GPU:
+#    - Uses AdamW8bit which stores optimizer states in 8-bit, reducing memory by ~75%
+#    - Compatible with any model architecture
+#    - Requires: pip install bitsandbytes
+#    - Recommended for: Training with limited GPU memory
+# 
+# 3. Mixed Precision Training (via compute_dtype):
+#    - Trains with lower precision (bfloat16/float16) to save memory and speed up training
+#    - Works alongside other options
+#
+low_precision:
+  use_fp8: false  # Set to true to use FP8 native compute (Hopper H100/Blackwell only)
+  use_4bit: true  # Set to true to enable 4-bit training preparation
+  use_4bit_optimizer: false  # Set to true to use 4-bit optimizer (AdamW8bit)
+  quantization_type: "nf4"  # "nf4" or "fp4" - nf4 is better for normally distributed weights
+  use_double_quant: true  # Use nested quantization for better compression
+  compute_dtype: "bfloat16"  # Compute dtype: "bfloat16", "float16", or "float32"
+
+# FP8 Configuration (Hopper/Blackwell GPUs only)
+fp8:
+  format: "hybrid"  # "e4m3" or "e5m2" or "hybrid" - hybrid uses both formats optimally
+  amax_history_len: 1024  # History length for scaling factor computation
+  amax_compute_algo: "max"  # "max" or "most_recent"
