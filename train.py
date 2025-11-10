@@ -120,44 +120,48 @@ def main():
     train_iter = iter(train_loader)
     loss = None  # Initialize for final checkpoint
     
-    for step in range(start_step, config.training.max_iters):
-        # Get next batch from DataLoader
-        try:
-            x, y = next(train_iter)
-        except StopIteration:
-            train_iter = iter(train_loader)
-            x, y = next(train_iter)
-        
-        x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        
-        # Execute training step
-        loss = trainer.train_step(x, y)
-        trainer.update_loss_accumulator(loss)
-        
-        # Logging
-        if trainer.should_log(step):
-            trainer.log_progress(step, config.training.max_iters)
-        
-        # Checkpointing
-        if trainer.should_checkpoint(step):
-            checkpoint_path, updated_run_dir = save_checkpoint(
-                model, 
-                optimizer, 
-                step, 
-                loss.item(), 
-                scaler,
-                dtype,
-                config,
-                checkpoint_dir=trainer.get_run_directory(),
-                current_run_dir=trainer.get_run_directory(),
-                is_first=trainer.is_first_checkpoint()
-            )
-            trainer.set_run_directory(updated_run_dir)
-            trainer.mark_first_checkpoint_saved()
-        
-        # Evaluation
-        if trainer.should_eval(step):
-            eval_model(model, device)
+    try:
+        for step in range(start_step, config.training.max_iters):
+            # Get next batch from DataLoader
+            try:
+                x, y = next(train_iter)
+            except StopIteration:
+                train_iter = iter(train_loader)
+                x, y = next(train_iter)
+            
+            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+            
+            # Execute training step
+            loss = trainer.train_step(x, y)
+            trainer.update_loss_accumulator(loss)
+            
+            # Logging
+            if trainer.should_log(step):
+                trainer.log_progress(step, config.training.max_iters)
+            
+            # Checkpointing
+            if trainer.should_checkpoint(step):
+                checkpoint_path, updated_run_dir = save_checkpoint(
+                    model, 
+                    optimizer, 
+                    step, 
+                    loss.item(), 
+                    scaler,
+                    dtype,
+                    config,
+                    checkpoint_dir=trainer.get_run_directory(),
+                    current_run_dir=trainer.get_run_directory(),
+                    is_first=trainer.is_first_checkpoint()
+                )
+                trainer.set_run_directory(updated_run_dir)
+                trainer.mark_first_checkpoint_saved()
+            
+            # Evaluation
+            if trainer.should_eval(step):
+                eval_model(model, device)
+    finally:
+        # Ensure TensorBoard writer is properly closed
+        trainer.close()
 
     print("Training done, now generating a sample")
     eval_model(model, device)

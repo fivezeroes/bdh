@@ -60,6 +60,29 @@ pip install -r requirements.txt
 python train.py
 ```
 
+### Training Monitoring with TensorBoard
+
+BDH includes built-in TensorBoard support for visualizing training metrics in real-time:
+
+```bash
+# Start TensorBoard (in a separate terminal)
+tensorboard --logdir=runs
+
+# Then access the dashboard at http://localhost:6006
+```
+
+TensorBoard logs training loss, learning rate, and optional gradient/weight histograms. Configuration is in `config.yaml`:
+
+```yaml
+tensorboard:
+  enabled: true
+  log_dir: "runs"
+  log_gradients: false  # Enable for detailed gradient analysis
+  log_weights: false    # Enable for weight distribution tracking
+```
+
+See [TENSORBOARD.md](TENSORBOARD.md) for detailed configuration and usage.
+
 ### Low-Precision Training (FP8 & 4-bit)
 
 BDH supports advanced low-precision training for memory efficiency and faster training:

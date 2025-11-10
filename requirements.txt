@@ -4,3 +4,4 @@ pyarrow
 pyyaml
 bitsandbytes
 transformer-engine[pytorch]
+tensorboard

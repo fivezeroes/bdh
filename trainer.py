@@ -13,11 +13,17 @@ try:
 except ImportError:
     TRANSFORMER_ENGINE_AVAILABLE = False
 
+try:
+    from torch.utils.tensorboard import SummaryWriter
+    TENSORBOARD_AVAILABLE = True
+except ImportError:
+    TENSORBOARD_AVAILABLE = False
+
 
 class Trainer:
     """Encapsulates the training loop for BDH model."""
     
-    def __init__(self, model, optimizer, config, device, dtype, scaler, fp8_recipe=None):
+    def __init__(self, model, optimizer, config, device, dtype, scaler, fp8_recipe=None, log_dir=None):
         """
         Initialize trainer.
         
@@ -29,6 +35,7 @@ class Trainer:
             dtype: Data type for training
             scaler: Gradient scaler for mixed precision
             fp8_recipe: Optional FP8 recipe for Transformer Engine
+            log_dir: Optional custom log directory for TensorBoard
         """
         self.model = model
         self.optimizer = optimizer
@@ -50,6 +57,23 @@ class Trainer:
         self.first_checkpoint_saved = False
         self.loss_acc = 0
         self.loss_steps = 0
+        
+        # Set up TensorBoard
+        self.writer = None
+        if hasattr(config, 'tensorboard') and config.tensorboard.enabled:
+            if not TENSORBOARD_AVAILABLE:
+                print("Warning: TensorBoard not available. Install with: pip install tensorboard")
+            else:
+                import os
+                if log_dir is None:
+                    log_dir = config.tensorboard.log_dir
+                # Create timestamped run directory
+                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                run_name = f"run_{timestamp}"
+                tensorboard_log_dir = os.path.join(log_dir, run_name)
+                self.writer = SummaryWriter(tensorboard_log_dir)
+                print(f"TensorBoard logging enabled: {tensorboard_log_dir}")
+                print(f"  View with: tensorboard --logdir={log_dir}")
     
     def _get_pytorch_dtype(self):
         """Convert dtype string to PyTorch dtype."""
@@ -105,6 +129,26 @@ class Trainer:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         avg_loss = self.loss_acc.item() / self.loss_steps if self.loss_steps > 0 else 0
         print(f"[{timestamp}] Step: {step}/{max_iters} loss {avg_loss:.3}")
+        
+        # Log to TensorBoard
+        if self.writer is not None:
+            self.writer.add_scalar('Loss/train', avg_loss, step)
+            
+            # Log learning rate
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.writer.add_scalar('Learning_Rate', current_lr, step)
+            
+            # Log gradient and weight histograms if enabled
+            if hasattr(self.config, 'tensorboard'):
+                if self.config.tensorboard.log_gradients:
+                    for name, param in self.model.named_parameters():
+                        if param.grad is not None:
+                            self.writer.add_histogram(f'Gradients/{name}', param.grad, step)
+                
+                if self.config.tensorboard.log_weights:
+                    for name, param in self.model.named_parameters():
+                        self.writer.add_histogram(f'Weights/{name}', param, step)
+        
         self.loss_acc = 0
         self.loss_steps = 0
     
@@ -128,3 +172,32 @@ class Trainer:
     def is_first_checkpoint(self):
         """Check if this is the first checkpoint."""
         return not self.first_checkpoint_saved
+    
+    def log_scalar(self, tag, value, step):
+        """
+        Log a scalar value to TensorBoard.
+        
+        Args:
+            tag: Name/tag for the scalar
+            value: Scalar value to log
+            step: Global step value
+        """
+        if self.writer is not None:
+            self.writer.add_scalar(tag, value, step)
+    
+    def log_text(self, tag, text, step):
+        """
+        Log text to TensorBoard.
+        
+        Args:
+            tag: Name/tag for the text
+            text: Text string to log
+            step: Global step value
+        """
+        if self.writer is not None:
+            self.writer.add_text(tag, text, step)
+    
+    def close(self):
+        """Close the TensorBoard writer."""
+        if self.writer is not None:
+            self.writer.close()

@@ -71,6 +71,15 @@ class FP8Config:
 
 
 @dataclass
+class TensorBoardConfig:
+    """TensorBoard configuration."""
+    enabled: bool = True
+    log_dir: str = "runs"
+    log_gradients: bool = False
+    log_weights: bool = False
+
+
+@dataclass
 class Config:
     """Complete configuration for BDH training."""
     model: ModelConfig
@@ -79,6 +88,7 @@ class Config:
     dataset: DatasetConfig
     low_precision: LowPrecisionConfig
     fp8: FP8Config
+    tensorboard: TensorBoardConfig
 
     @classmethod
     def from_yaml(cls, config_path: str = "config.yaml") -> "Config":
@@ -96,6 +106,7 @@ class Config:
             dataset=DatasetConfig(**config_dict.get('dataset', {})),
             low_precision=LowPrecisionConfig(**config_dict.get('low_precision', {})),
             fp8=FP8Config(**config_dict.get('fp8', {})),
+            tensorboard=TensorBoardConfig(**config_dict.get('tensorboard', {})),
         )
     
     @classmethod
@@ -108,6 +119,7 @@ class Config:
             dataset=DatasetConfig(),
             low_precision=LowPrecisionConfig(),
             fp8=FP8Config(),
+            tensorboard=TensorBoardConfig(),
         )
     
     def to_bdh_config(self):
@@ -132,6 +144,7 @@ class Config:
             'dataset': dataclasses.asdict(self.dataset),
             'low_precision': dataclasses.asdict(self.low_precision),
             'fp8': dataclasses.asdict(self.fp8),
+            'tensorboard': dataclasses.asdict(self.tensorboard),
         }
     
     def save_to_yaml(self, config_path: str) -> None:
