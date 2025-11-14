@@ -77,3 +77,42 @@ fp8:
   format: "hybrid"  # "e4m3" or "e5m2" or "hybrid" - hybrid uses both formats optimally
   amax_history_len: 1024  # History length for scaling factor computation
   amax_compute_algo: "max"  # "max" or "most_recent"
+
+# Tokenizer Configuration
+# 
+# The tokenizer determines how text is converted to token IDs for the model.
+# Different tokenizers offer different trade-offs:
+# 
+# 1. Byte-level (type: "byte") - Current default:
+#    - vocab_size: 256 (all possible byte values)
+#    - Language-agnostic, no dependencies
+#    - Inefficient for long sequences
+#    - Backward compatible with existing checkpoints
+# 
+# 2. TikToken (type: "tiktoken") - GPT-style tokenization:
+#    - Requires: pip install tiktoken
+#    - name: "gpt2" (vocab_size: 50257) or "cl100k_base" (vocab_size: 100277)
+#    - 3-4x compression vs byte-level
+#    - Fast Rust implementation
+#    - Good for English text
+# 
+# 3. HuggingFace (type: "huggingface") - Flexible tokenization:
+#    - Requires: pip install transformers
+#    - name: any HuggingFace model (e.g., "gpt2", "bert-base-uncased")
+#    - Supports many tokenizer types (BPE, WordPiece, etc.)
+#    - Extensive model compatibility
+# 
+# 4. SentencePiece (type: "sentencepiece") - Custom tokenization:
+#    - Requires: pip install sentencepiece
+#    - name: path to .model file
+#    - Language-agnostic, trainable
+#    - Good for multilingual models
+#
+# NOTE: Changing tokenizer type requires retraining from scratch.
+#       Model vocab_size will be auto-detected from tokenizer.
+tokenizer:
+  type: "tiktoken"  # Options: "byte", "tiktoken", "huggingface", "sentencepiece"
+  name: "gpt2"  # For tiktoken: "gpt2" or "cl100k_base"; for HF: model name; for SP: path to .model
+  pad_token_id: null  # Auto-detected from tokenizer if null
+  eos_token_id: null  # Auto-detected from tokenizer if null
+  bos_token_id: null  # Auto-detected from tokenizer if null

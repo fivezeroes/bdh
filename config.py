@@ -80,6 +80,16 @@ class TensorBoardConfig:
 
 
 @dataclass
+class TokenizerConfig:
+    """Tokenizer configuration."""
+    type: str = "byte"  # Options: "byte", "tiktoken", "huggingface", "sentencepiece"
+    name: Optional[str] = None  # e.g., "gpt2", "cl100k_base", or path to tokenizer
+    pad_token_id: Optional[int] = None  # Auto-detected from tokenizer if None
+    eos_token_id: Optional[int] = None  # Auto-detected from tokenizer if None
+    bos_token_id: Optional[int] = None  # Auto-detected from tokenizer if None
+
+
+@dataclass
 class Config:
     """Complete configuration for BDH training."""
     model: ModelConfig
@@ -89,6 +99,7 @@ class Config:
     low_precision: LowPrecisionConfig
     fp8: FP8Config
     tensorboard: TensorBoardConfig
+    tokenizer: TokenizerConfig
 
     @classmethod
     def from_yaml(cls, config_path: str = "config.yaml") -> "Config":
@@ -107,6 +118,7 @@ class Config:
             low_precision=LowPrecisionConfig(**config_dict.get('low_precision', {})),
             fp8=FP8Config(**config_dict.get('fp8', {})),
             tensorboard=TensorBoardConfig(**config_dict.get('tensorboard', {})),
+            tokenizer=TokenizerConfig(**config_dict.get('tokenizer', {})),
         )
     
     @classmethod
@@ -120,6 +132,7 @@ class Config:
             low_precision=LowPrecisionConfig(),
             fp8=FP8Config(),
             tensorboard=TensorBoardConfig(),
+            tokenizer=TokenizerConfig(),
         )
     
     def to_bdh_config(self):
@@ -145,6 +158,7 @@ class Config:
             'low_precision': dataclasses.asdict(self.low_precision),
             'fp8': dataclasses.asdict(self.fp8),
             'tensorboard': dataclasses.asdict(self.tensorboard),
+            'tokenizer': dataclasses.asdict(self.tokenizer),
         }
     
     def save_to_yaml(self, config_path: str) -> None:

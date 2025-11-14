@@ -30,7 +30,11 @@ print(f"Using device: {device} with dtype {dtype}")
 
 
 def load_checkpoint_for_inference(checkpoint_path):
-    """Load model checkpoint for inference."""
+    """Load model checkpoint for inference.
+    
+    Returns:
+        Tuple of (model, tokenizer_config_dict)
+    """
     if not os.path.exists(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     
@@ -49,16 +53,36 @@ def load_checkpoint_for_inference(checkpoint_path):
     loss = checkpoint.get('loss', 'unknown')
     print(f"Loaded checkpoint from step {step} (loss: {loss})")
     
-    return model
+    # Get tokenizer config if available
+    tokenizer_config = checkpoint.get('tokenizer_config', None)
+    
+    return model, tokenizer_config
 
 
-def generate_text(model, prompt_text, max_new_tokens=100, top_k=3, temperature=1.0):
-    """Generate text from a prompt."""
-    # Convert prompt to tensor
-    prompt_bytes = prompt_text.encode('utf-8', errors='ignore')
-    prompt_tensor = torch.tensor(
-        bytearray(prompt_bytes), dtype=torch.long, device=device
-    ).unsqueeze(0)
+def generate_text(model, prompt_text, tokenizer=None, max_new_tokens=100, top_k=3, temperature=1.0):
+    """Generate text from a prompt.
+    
+    Args:
+        model: The BDH model
+        prompt_text: Input prompt string
+        tokenizer: Tokenizer instance (if None, uses byte-level encoding)
+        max_new_tokens: Maximum number of tokens to generate
+        top_k: Top-k sampling parameter
+        temperature: Sampling temperature
+        
+    Returns:
+        Generated text string
+    """
+    # Encode prompt using tokenizer
+    if tokenizer is not None:
+        token_ids = tokenizer.encode(prompt_text)
+        prompt_tensor = torch.tensor(token_ids, dtype=torch.long, device=device).unsqueeze(0)
+    else:
+        # Fallback to byte-level encoding
+        prompt_bytes = prompt_text.encode('utf-8', errors='ignore')
+        prompt_tensor = torch.tensor(
+            bytearray(prompt_bytes), dtype=torch.long, device=device
+        ).unsqueeze(0)
     
     # Generate
     with torch.no_grad():
@@ -69,18 +93,25 @@ def generate_text(model, prompt_text, max_new_tokens=100, top_k=3, temperature=1
             temperature=temperature
         )
     
-    # Decode output
-    output_bytes = bytes(output.to(torch.uint8).to("cpu").squeeze(0))
-    output_text = output_bytes.decode(errors='backslashreplace')
+    # Decode output using tokenizer
+    if tokenizer is not None:
+        output_tokens = output.to("cpu").squeeze(0).tolist()
+        output_text = tokenizer.decode(output_tokens)
+    else:
+        # Fallback to byte-level decoding
+        output_bytes = bytes(output.to(torch.uint8).to("cpu").squeeze(0))
+        output_text = output_bytes.decode(errors='backslashreplace')
     
     return output_text
 
 
-def interactive_mode(model, max_new_tokens=100, top_k=3, temperature=1.0):
+def interactive_mode(model, tokenizer=None, max_new_tokens=100, top_k=3, temperature=1.0):
     """Run interactive prompting mode."""
     print("\n" + "="*60)
     print("Interactive Prompting Mode")
     print("="*60)
+    tokenizer_type = "byte-level" if tokenizer is None else getattr(tokenizer, '__class__', type(tokenizer)).__name__
+    print(f"Tokenizer: {tokenizer_type}")
     print(f"Settings: max_tokens={max_new_tokens}, top_k={top_k}, temperature={temperature}")
     print("Type your prompt and press Enter to generate.")
     print("Type 'quit' or 'exit' to stop.")
@@ -119,7 +150,7 @@ def interactive_mode(model, max_new_tokens=100, top_k=3, temperature=1.0):
                 continue
             
             print("\nGenerating...")
-            output = generate_text(model, prompt, max_new_tokens, top_k, temperature)
+            output = generate_text(model, prompt, tokenizer, max_new_tokens, top_k, temperature)
             print("\n" + "-"*60)
             print(output)
             print("-"*60)
@@ -142,21 +173,37 @@ def main():
     
     args = parser.parse_args()
     
-    # Load the model
-    model = load_checkpoint_for_inference(args.checkpoint)
+    # Load the model and tokenizer config
+    model, tokenizer_config = load_checkpoint_for_inference(args.checkpoint)
+    
+    # Initialize tokenizer from config
+    tokenizer = None
+    if tokenizer_config is not None:
+        try:
+            from tokenizers import create_tokenizer
+            tokenizer = create_tokenizer(
+                tokenizer_config.get('type', 'byte'),
+                tokenizer_config.get('name', None)
+            )
+            print(f"Loaded tokenizer: {tokenizer.__class__.__name__}")
+        except Exception as e:
+            print(f"Warning: Could not load tokenizer from checkpoint: {e}")
+            print("Falling back to byte-level encoding")
+    else:
+        print("No tokenizer config in checkpoint. Using byte-level encoding.")
     
     # Decide mode
     if args.prompt is not None:
         # Single prompt mode
         print(f"\nPrompt: {args.prompt}")
         print("\nGenerating...")
-        output = generate_text(model, args.prompt, args.max_tokens, args.top_k, args.temperature)
+        output = generate_text(model, args.prompt, tokenizer, args.max_tokens, args.top_k, args.temperature)
         print("\n" + "="*60)
         print(output)
         print("="*60)
     else:
         # Interactive mode (default)
-        interactive_mode(model, args.max_tokens, args.top_k, args.temperature)
+        interactive_mode(model, tokenizer, args.max_tokens, args.top_k, args.temperature)
 
 
 if __name__ == "__main__":

@@ -8,31 +8,48 @@ from datetime import datetime
 import torch
 
 
-def eval_model(model, device, max_new_tokens=100, top_k=3):
+def eval_model(model, device, tokenizer=None, max_new_tokens=100, top_k=3):
     """
     Evaluate model by generating text from a prompt.
     
     Args:
         model: BDH model to evaluate
         device: Device to run on
+        tokenizer: Tokenizer instance (if None, uses byte-level encoding)
         max_new_tokens: Maximum number of tokens to generate
         top_k: Top-k sampling parameter
     """
     model.eval()
 
-    prompt = torch.tensor(
-        bytearray("The Capital of France is ", "utf-8"), dtype=torch.long, device=device
-    ).unsqueeze(0)
+    prompt_text = "The Capital of France is "
+    
+    # Encode prompt using tokenizer
+    if tokenizer is not None:
+        token_ids = tokenizer.encode(prompt_text)
+        prompt = torch.tensor(token_ids, dtype=torch.long, device=device).unsqueeze(0)
+    else:
+        # Fallback to byte-level encoding
+        prompt = torch.tensor(
+            bytearray(prompt_text, "utf-8"), dtype=torch.long, device=device
+        ).unsqueeze(0)
+    
     ret = model.generate(prompt, max_new_tokens=max_new_tokens, top_k=top_k)
-    ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
-        errors="backslashreplace"
-    )
+    
+    # Decode output using tokenizer
+    if tokenizer is not None:
+        ret_tokens = ret.to("cpu").squeeze(0).tolist()
+        ret_decoded = tokenizer.decode(ret_tokens)
+    else:
+        # Fallback to byte-level decoding
+        ret_decoded = bytes(ret.to(torch.uint8).to("cpu").squeeze(0)).decode(
+            errors="backslashreplace"
+        )
 
     print(ret_decoded)
 
 
 def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config, 
-                    checkpoint_dir=None, current_run_dir=None, is_first=False):
+                    checkpoint_dir=None, current_run_dir=None, is_first=False, tokenizer_config=None):
     """
     Save model checkpoint.
     
@@ -47,6 +64,7 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
         checkpoint_dir: Directory to save checkpoint in (optional)
         current_run_dir: Current run directory (will be created if None on first save)
         is_first: Whether this is the first checkpoint (saves config file)
+        tokenizer_config: Tokenizer config dict to save in checkpoint
         
     Returns:
         Tuple of (checkpoint_path, updated_run_dir)
@@ -73,6 +91,7 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
         'loss': loss,
         'config': config.to_bdh_config(),
         'scaler_state_dict': scaler.state_dict() if dtype == "float16" else None,
+        'tokenizer_config': tokenizer_config,
     }
     
     torch.save(checkpoint, checkpoint_path)

@@ -4,6 +4,7 @@
 
 import glob
 import os
+from typing import Optional
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -14,9 +15,10 @@ from torch.utils.data import Dataset
 class ParquetDataset(Dataset):
     """Dataset class for efficient parquet file loading with PyTorch DataLoader."""
     
-    def __init__(self, parquet_files, block_size=512):
+    def __init__(self, parquet_files, block_size=512, tokenizer=None):
         self.parquet_files = parquet_files
         self.block_size = block_size
+        self.tokenizer = tokenizer  # Tokenizer instance for encoding text
         
         # Pre-compute total number of samples
         self.file_lengths = []
@@ -67,19 +69,31 @@ class ParquetDataset(Dataset):
         if text is None:
             text = ""
         
-        # Convert text to bytes
-        text_bytes = text.encode('utf-8', errors='ignore')
+        # Tokenize text
+        if self.tokenizer is not None:
+            token_ids = self.tokenizer.encode(text)
+        else:
+            # Fallback to byte-level encoding if no tokenizer provided
+            text_bytes = text.encode('utf-8', errors='ignore')
+            token_ids = list(text_bytes)
         
         # Sample a random sequence
-        if len(text_bytes) > self.block_size + 1:
-            start_idx = int(torch.randint(len(text_bytes) - self.block_size - 1, (1,)).item())
-            seq_bytes = text_bytes[start_idx:start_idx + self.block_size + 1]
+        if len(token_ids) > self.block_size + 1:
+            start_idx = int(torch.randint(len(token_ids) - self.block_size - 1, (1,)).item())
+            seq_tokens = token_ids[start_idx:start_idx + self.block_size + 1]
         else:
-            # Pad if text is too short
-            seq_bytes = text_bytes + b'\x00' * (self.block_size + 1 - len(text_bytes))
+            # Pad if sequence is too short
+            if self.tokenizer is not None:
+                # Use pad token if available, otherwise use eos token, otherwise use 0
+                pad_id = (self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None 
+                         else self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None 
+                         else 0)
+            else:
+                pad_id = 0
+            seq_tokens = token_ids + [pad_id] * (self.block_size + 1 - len(token_ids))
         
         # Convert to tensors
-        seq_array = np.frombuffer(seq_bytes, dtype=np.uint8).astype(np.int64)
+        seq_array = np.array(seq_tokens, dtype=np.int64)
         x = torch.from_numpy(seq_array[:self.block_size])
         y = torch.from_numpy(seq_array[1:self.block_size + 1])
         
@@ -151,7 +165,7 @@ class ParquetFileCache:
         self.cache.clear()
 
 
-def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, debug=False):
+def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, tokenizer=None, debug=False):
     """
     Get a batch by randomly sampling from parquet files.
     
@@ -161,6 +175,7 @@ def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, de
         block_size: Size of each sequence block
         device: Device to place tensors on
         file_cache: Optional ParquetFileCache instance
+        tokenizer: Optional tokenizer for encoding text
         debug: If True, print debug information
         
     Returns:
@@ -200,19 +215,31 @@ def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, de
         if text is None:
             text = ""
         
-        # Convert text to bytes
-        text_bytes = text.encode('utf-8', errors='ignore')
+        # Tokenize text
+        if tokenizer is not None:
+            token_ids = tokenizer.encode(text)
+        else:
+            # Fallback to byte-level encoding if no tokenizer provided
+            text_bytes = text.encode('utf-8', errors='ignore')
+            token_ids = list(text_bytes)
         
         # Sample a random sequence of block_size from this text
-        if len(text_bytes) > block_size + 1:
-            start_idx = int(torch.randint(len(text_bytes) - block_size - 1, (1,)).item())
-            seq_bytes = text_bytes[start_idx:start_idx + block_size + 1]
+        if len(token_ids) > block_size + 1:
+            start_idx = int(torch.randint(len(token_ids) - block_size - 1, (1,)).item())
+            seq_tokens = token_ids[start_idx:start_idx + block_size + 1]
         else:
-            # Pad if text is too short
-            seq_bytes = text_bytes + b'\x00' * (block_size + 1 - len(text_bytes))
+            # Pad if sequence is too short
+            if tokenizer is not None:
+                # Use pad token if available, otherwise use eos token, otherwise use 0
+                pad_id = (tokenizer.pad_token_id if tokenizer.pad_token_id is not None 
+                         else tokenizer.eos_token_id if tokenizer.eos_token_id is not None 
+                         else 0)
+            else:
+                pad_id = 0
+            seq_tokens = token_ids + [pad_id] * (block_size + 1 - len(token_ids))
         
         # Convert to tensors
-        seq_array = np.frombuffer(seq_bytes, dtype=np.uint8).astype(np.int64)
+        seq_array = np.array(seq_tokens, dtype=np.int64)
         x_list.append(torch.from_numpy(seq_array[:block_size]))
         y_list.append(torch.from_numpy(seq_array[1:block_size + 1]))
     
@@ -222,15 +249,21 @@ def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, de
     if debug:
         print("x:")
         for i in range(len(x)):
-            for j in range(len(x[i])):
-                print(f"{chr(int(x[i][j].item()))}", end="")
-        print("")
+            if tokenizer is not None:
+                print(tokenizer.decode(x[i].tolist()))
+            else:
+                for j in range(len(x[i])):
+                    print(f"{chr(int(x[i][j].item()))}", end="")
+                print()
 
         print("y:")
         for i in range(len(y)):
-            for j in range(len(y[i])):
-                print(f"{chr(int(y[i][j].item()))}", end="")
-        print("")
+            if tokenizer is not None:
+                print(tokenizer.decode(y[i].tolist()))
+            else:
+                for j in range(len(y[i])):
+                    print(f"{chr(int(y[i][j].item()))}", end="")
+                print()
         input("Press the <ENTER> key to continue...")
     
     if torch.cuda.is_available():

@@ -4,11 +4,15 @@
 
 import argparse
 import os
+import dataclasses
 
 import bdh
 import config as cfg
 import torch
 from torch.utils.data import DataLoader
+
+# Import tokenizer support
+from tokenizers import create_tokenizer
 
 # Import refactored modules
 from data import ParquetDataset, fetch_parquet_files, split_parquet_files
@@ -30,6 +34,23 @@ def main():
     args = parser.parse_args()
 
     config = cfg.Config.from_yaml(args.config)
+
+    # Initialize tokenizer
+    print(f"Initializing tokenizer: {config.tokenizer.type}")
+    tokenizer = create_tokenizer(
+        tokenizer_type=config.tokenizer.type,
+        tokenizer_name=config.tokenizer.name
+    )
+    print(f"Tokenizer loaded: {tokenizer.__class__.__name__}")
+    print(f"Vocabulary size: {tokenizer.vocab_size}")
+    
+    # Update model vocab_size from tokenizer if not explicitly set
+    if config.model.vocab_size != tokenizer.vocab_size:
+        print(f"Updating model vocab_size from {config.model.vocab_size} to {tokenizer.vocab_size}")
+        config.model.vocab_size = tokenizer.vocab_size
+    
+    # Create tokenizer config dict for checkpointing
+    tokenizer_config_dict = dataclasses.asdict(config.tokenizer)
 
     # Setup device and dtype
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.mps.is_available() else "cpu")
@@ -75,7 +96,7 @@ def main():
     check_low_precision_requirements(config, device)
     
     # Create datasets and dataloaders
-    train_dataset = ParquetDataset(train_files, config.training.block_size)
+    train_dataset = ParquetDataset(train_files, config.training.block_size, tokenizer=tokenizer)
     
     train_loader = DataLoader(
         train_dataset,
@@ -151,20 +172,21 @@ def main():
                     config,
                     checkpoint_dir=trainer.get_run_directory(),
                     current_run_dir=trainer.get_run_directory(),
-                    is_first=trainer.is_first_checkpoint()
+                    is_first=trainer.is_first_checkpoint(),
+                    tokenizer_config=tokenizer_config_dict
                 )
                 trainer.set_run_directory(updated_run_dir)
                 trainer.mark_first_checkpoint_saved()
             
             # Evaluation
             if trainer.should_eval(step):
-                eval_model(model, device)
+                eval_model(model, device, tokenizer=tokenizer)
     finally:
         # Ensure TensorBoard writer is properly closed
         trainer.close()
 
     print("Training done, now generating a sample")
-    eval_model(model, device)
+    eval_model(model, device, tokenizer=tokenizer)
     
     # Save final checkpoint
     final_loss = loss.item() if loss is not None else 0.0
@@ -177,7 +199,8 @@ def main():
         dtype,
         config,
         checkpoint_dir=trainer.get_run_directory(),
-        current_run_dir=trainer.get_run_directory()
+        current_run_dir=trainer.get_run_directory(),
+        tokenizer_config=tokenizer_config_dict
     )
 
 
