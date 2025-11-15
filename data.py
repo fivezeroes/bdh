@@ -77,6 +77,17 @@ class ParquetDataset(Dataset):
             text_bytes = text.encode('utf-8', errors='ignore')
             token_ids = list(text_bytes)
         
+        # Handle empty token_ids (empty text)
+        if not token_ids:
+            # Use pad token for empty sequences
+            if self.tokenizer is not None:
+                pad_id = (self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None 
+                         else self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None 
+                         else 0)
+            else:
+                pad_id = 0
+            token_ids = [pad_id]
+        
         # Sample a random sequence
         if len(token_ids) > self.block_size + 1:
             start_idx = int(torch.randint(len(token_ids) - self.block_size - 1, (1,)).item())
@@ -222,6 +233,17 @@ def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, to
             # Fallback to byte-level encoding if no tokenizer provided
             text_bytes = text.encode('utf-8', errors='ignore')
             token_ids = list(text_bytes)
+        
+        # Handle empty token_ids (empty text)
+        if not token_ids:
+            # Use pad token for empty sequences
+            if tokenizer is not None:
+                pad_id = (tokenizer.pad_token_id if tokenizer.pad_token_id is not None 
+                         else tokenizer.eos_token_id if tokenizer.eos_token_id is not None 
+                         else 0)
+            else:
+                pad_id = 0
+            token_ids = [pad_id]
         
         # Sample a random sequence of block_size from this text
         if len(token_ids) > block_size + 1:

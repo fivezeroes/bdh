@@ -25,6 +25,7 @@ from optimization import (
 from trainer import Trainer
 from training_utils import eval_model, load_checkpoint, save_checkpoint
 
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 def main():
     """Main training function."""
