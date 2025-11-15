@@ -15,26 +15,35 @@ from torch.utils.data import Dataset
 class ParquetDataset(Dataset):
     """Dataset class for efficient parquet file loading with PyTorch DataLoader."""
     
-    def __init__(self, parquet_files, block_size=512, tokenizer=None):
+    def __init__(self, parquet_files, block_size=512, tokenizer=None, file_lengths=None):
         self.parquet_files = parquet_files
         self.block_size = block_size
         self.tokenizer = tokenizer  # Tokenizer instance for encoding text
         
         # Pre-compute total number of samples
-        self.file_lengths = []
-        self.cumulative_lengths = [0]
-        
-        print(f"Indexing {len(parquet_files)} parquet files...")
-        for i, file_path in enumerate(parquet_files):
-            pf = pq.ParquetFile(file_path)
-            num_rows = pf.metadata.num_rows
-            self.file_lengths.append(num_rows)
-            self.cumulative_lengths.append(self.cumulative_lengths[-1] + num_rows)
-            if (i + 1) % 100 == 0:
-                print(f"  Indexed {i + 1}/{len(parquet_files)} files...")
-        
-        self.total_length = self.cumulative_lengths[-1]
-        print(f"Dataset indexed: {self.total_length:,} total samples across {len(parquet_files)} files")
+        if file_lengths is not None:
+            # Use pre-computed file lengths (avoids re-indexing in worker processes)
+            self.file_lengths = file_lengths
+            self.cumulative_lengths = [0]
+            for length in file_lengths:
+                self.cumulative_lengths.append(self.cumulative_lengths[-1] + length)
+            self.total_length = self.cumulative_lengths[-1]
+        else:
+            # Index files (only done once in main process)
+            self.file_lengths = []
+            self.cumulative_lengths = [0]
+            
+            print(f"Indexing {len(parquet_files)} parquet files...")
+            for i, file_path in enumerate(parquet_files):
+                pf = pq.ParquetFile(file_path)
+                num_rows = pf.metadata.num_rows
+                self.file_lengths.append(num_rows)
+                self.cumulative_lengths.append(self.cumulative_lengths[-1] + num_rows)
+                if (i + 1) % 100 == 0:
+                    print(f"  Indexed {i + 1}/{len(parquet_files)} files...")
+            
+            self.total_length = self.cumulative_lengths[-1]
+            print(f"Dataset indexed: {self.total_length:,} total samples across {len(parquet_files)} files")
     
     def __len__(self):
         return self.total_length

@@ -97,7 +97,18 @@ def main():
     check_low_precision_requirements(config, device)
     
     # Create datasets and dataloaders
-    train_dataset = ParquetDataset(train_files, config.training.block_size, tokenizer=tokenizer)
+    # Index files once in main process to avoid repeated indexing in workers
+    print(f"Pre-indexing dataset in main process...")
+    temp_dataset = ParquetDataset(train_files, config.training.block_size, tokenizer=tokenizer)
+    file_lengths = temp_dataset.file_lengths
+    
+    # Create actual dataset with pre-computed file lengths
+    train_dataset = ParquetDataset(
+        train_files, 
+        config.training.block_size, 
+        tokenizer=tokenizer,
+        file_lengths=file_lengths
+    )
     
     train_loader = DataLoader(
         train_dataset,
