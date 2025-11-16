@@ -45,7 +45,11 @@ def eval_model(model, device, tokenizer=None, max_new_tokens=100, top_k=3):
             errors="backslashreplace"
         )
 
+    print("=" * 80)
+    print("EVALUATION")
+    print("=" * 80)
     print(ret_decoded)
+    print("=" * 80)
 
 
 def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config, 

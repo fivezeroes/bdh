@@ -58,17 +58,6 @@ class Trainer:
         self.loss_acc = 0
         self.loss_steps = 0
         
-        # Set up text log file
-        self.log_file = None
-        if run_dir is not None:
-            import os
-            os.makedirs(run_dir, exist_ok=True)
-            log_path = os.path.join(run_dir, "training.log")
-            self.log_file = open(log_path, 'a')  # Append mode for resume
-            self._log(f"{'='*80}")
-            self._log(f"Training session started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log(f"{'='*80}")
-        
         # Set up TensorBoard
         self.writer = None
         if hasattr(config, 'tensorboard') and config.tensorboard.enabled:
@@ -142,9 +131,7 @@ class Trainer:
         """Log training progress."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         avg_loss = self.loss_acc.item() / self.loss_steps if self.loss_steps > 0 else 0
-        log_msg = f"[{timestamp}] Step: {step}/{max_iters} loss {avg_loss:.3}"
-        print(log_msg)
-        self._log(log_msg)
+        print(f"[{timestamp}] Step: {step}/{max_iters} loss {avg_loss:.3}")
         
         # Log to TensorBoard
         if self.writer is not None:
@@ -178,15 +165,6 @@ class Trainer:
         import os
         self.current_run_dir = run_dir
         
-        # Initialize text log file if not already done
-        if self.log_file is None:
-            os.makedirs(run_dir, exist_ok=True)
-            log_path = os.path.join(run_dir, "training.log")
-            self.log_file = open(log_path, 'a')
-            self._log(f"{'='*80}")
-            self._log(f"Training session started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log(f"{'='*80}")
-        
         # Initialize TensorBoard writer if not already done and TensorBoard is enabled
         if (self.writer is None and 
             hasattr(self.config, 'tensorboard') and 
@@ -195,12 +173,6 @@ class Trainer:
             self.writer = SummaryWriter(run_dir)
             print(f"TensorBoard logging enabled: {run_dir}")
             print(f"  View with: tensorboard --logdir={self.config.tensorboard.log_dir}")
-    
-    def _log(self, message):
-        """Write a message to the log file."""
-        if self.log_file is not None:
-            self.log_file.write(message + '\n')
-            self.log_file.flush()  # Ensure immediate write
     
     def get_run_directory(self):
         """Get the current run directory."""
@@ -239,11 +211,6 @@ class Trainer:
             self.writer.add_text(tag, text, step)
     
     def close(self):
-        """Close the TensorBoard writer and log file."""
-        if self.log_file is not None:
-            self._log(f"{'='*80}")
-            self._log(f"Training session ended at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            self._log(f"{'='*80}")
-            self.log_file.close()
+        """Close the TensorBoard writer."""
         if self.writer is not None:
             self.writer.close()

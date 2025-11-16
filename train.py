@@ -26,6 +26,7 @@ from optimization import (
 )
 from trainer import Trainer
 from training_utils import eval_model, load_checkpoint, save_checkpoint
+from logging_utils import setup_logging, teardown_logging
 
 def main():
     """Main training function."""
@@ -35,6 +36,20 @@ def main():
     args = parser.parse_args()
 
     config = cfg.Config.from_yaml(args.config)
+    
+    # Determine run directory early so we can set up logging
+    run_dir = None
+    if config.training.resume_from_checkpoint is not None:
+        # Resuming from checkpoint - use the same directory as the checkpoint
+        run_dir = os.path.dirname(config.training.resume_from_checkpoint)
+    else:
+        # New training run - create timestamped directory
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(config.training.runs_dir, f"run_{timestamp}")
+    
+    # Set up logging early to capture all output
+    loggers = setup_logging(run_dir)
 
     # Initialize tokenizer
     print(f"Initializing tokenizer: {config.tokenizer.type}")
@@ -85,19 +100,6 @@ def main():
     # Fetch and split data
     parquet_files = fetch_parquet_files(config.dataset.parquet_dir)
     train_files, test_files = split_parquet_files(parquet_files, train_ratio=0.9)
-    
-    # Determine run directory for this training session
-    run_dir = None
-    if config.training.resume_from_checkpoint is not None:
-        # Resuming from checkpoint - use the same directory as the checkpoint
-        run_dir = os.path.dirname(config.training.resume_from_checkpoint)
-        print(f"Resuming training in directory: {run_dir}")
-    else:
-        # New training run - create timestamped directory
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = os.path.join(config.training.runs_dir, f"run_{timestamp}")
-        print(f"Creating new run directory: {run_dir}")
 
     # Check low precision requirements
     check_low_precision_requirements(config, device)
@@ -198,6 +200,8 @@ def main():
     finally:
         # Ensure TensorBoard writer is properly closed
         trainer.close()
+        # Restore stdout/stderr and close log files
+        teardown_logging(loggers)
 
     print("Training done, now generating a sample")
     eval_model(model, device, tokenizer=tokenizer)
