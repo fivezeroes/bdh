@@ -9,7 +9,7 @@ This guide shows you how to use the `prompt.py` script to load trained BDH check
 The easiest way to experiment with your trained model:
 
 ```bash
-python prompt.py checkpoints/checkpoint_1000.pt
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt
 ```
 
 This launches an interactive session where you can:
@@ -22,7 +22,7 @@ This launches an interactive session where you can:
 Generate text from a single prompt and exit:
 
 ```bash
-python prompt.py checkpoints/checkpoint_1000.pt --prompt "The Capital of France is"
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "The Capital of France is"
 ```
 
 ## Generation Parameters
@@ -30,7 +30,7 @@ python prompt.py checkpoints/checkpoint_1000.pt --prompt "The Capital of France 
 You can customize how the model generates text:
 
 ```bash
-python prompt.py checkpoints/checkpoint_1000.pt \
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt \
     --prompt "Once upon a time" \
     --max-tokens 200 \
     --top-k 5 \
@@ -83,7 +83,7 @@ When running in interactive mode:
 ### Example 1: Creative Writing
 
 ```bash
-python prompt.py checkpoints/checkpoint_5000.pt \
+python prompt.py runs/run_20251115_143022/checkpoint_5000.pt \
     --prompt "In a world where dragons" \
     --max-tokens 300 \
     --top-k 10 \
@@ -93,7 +93,7 @@ python prompt.py checkpoints/checkpoint_5000.pt \
 ### Example 2: Factual Completion
 
 ```bash
-python prompt.py checkpoints/checkpoint_5000.pt \
+python prompt.py runs/run_20251115_143022/checkpoint_5000.pt \
     --prompt "The three branches of government are" \
     --max-tokens 100 \
     --top-k 3 \
@@ -103,7 +103,7 @@ python prompt.py checkpoints/checkpoint_5000.pt \
 ### Example 3: Code Generation
 
 ```bash
-python prompt.py checkpoints/checkpoint_10000.pt \
+python prompt.py runs/run_20251115_143022/checkpoint_10000.pt \
     --prompt "def fibonacci(n):" \
     --max-tokens 150 \
     --top-k 5 \
@@ -134,7 +134,8 @@ python prompt.py checkpoints/checkpoint_10000.pt \
 **Q: Checkpoint file not found**
 - Check that the path is correct
 - Make sure you've trained the model first with `train.py`
-- List available checkpoints: `ls checkpoints/`
+- List available runs: `ls runs/`
+- List checkpoints in a run: `ls runs/run_20251115_143022/`
 
 **Q: Out of memory**
 - Reduce max-tokens

@@ -127,13 +127,13 @@ After training, you can load a checkpoint and prompt the model:
 
 ```bash
 # Interactive mode - prompt the model interactively
-python prompt.py checkpoints/checkpoint_1000.pt
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt
 
 # Single prompt mode
-python prompt.py checkpoints/checkpoint_1000.pt --prompt "The Capital of France is"
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "The Capital of France is"
 
 # Customize generation parameters
-python prompt.py checkpoints/checkpoint_1000.pt --prompt "Once upon a time" --max-tokens 200 --top-k 5 --temperature 0.8
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "Once upon a time" --max-tokens 200 --top-k 5 --temperature 0.8
 ```
 
 **Interactive mode commands:**

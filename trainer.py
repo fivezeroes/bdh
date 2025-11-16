@@ -23,7 +23,7 @@ except ImportError:
 class Trainer:
     """Encapsulates the training loop for BDH model."""
     
-    def __init__(self, model, optimizer, config, device, dtype, scaler, fp8_recipe=None, log_dir=None):
+    def __init__(self, model, optimizer, config, device, dtype, scaler, fp8_recipe=None, run_dir=None):
         """
         Initialize trainer.
         
@@ -35,7 +35,7 @@ class Trainer:
             dtype: Data type for training
             scaler: Gradient scaler for mixed precision
             fp8_recipe: Optional FP8 recipe for Transformer Engine
-            log_dir: Optional custom log directory for TensorBoard
+            run_dir: Optional run directory for checkpoints and TensorBoard (if None, will be created on first checkpoint)
         """
         self.model = model
         self.optimizer = optimizer
@@ -53,10 +53,21 @@ class Trainer:
         )
         
         # Training state
-        self.current_run_dir = None
+        self.current_run_dir = run_dir
         self.first_checkpoint_saved = False
         self.loss_acc = 0
         self.loss_steps = 0
+        
+        # Set up text log file
+        self.log_file = None
+        if run_dir is not None:
+            import os
+            os.makedirs(run_dir, exist_ok=True)
+            log_path = os.path.join(run_dir, "training.log")
+            self.log_file = open(log_path, 'a')  # Append mode for resume
+            self._log(f"{'='*80}")
+            self._log(f"Training session started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            self._log(f"{'='*80}")
         
         # Set up TensorBoard
         self.writer = None
@@ -65,15 +76,18 @@ class Trainer:
                 print("Warning: TensorBoard not available. Install with: pip install tensorboard")
             else:
                 import os
-                if log_dir is None:
-                    log_dir = config.tensorboard.log_dir
-                # Create timestamped run directory
-                timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-                run_name = f"run_{timestamp}"
-                tensorboard_log_dir = os.path.join(log_dir, run_name)
-                self.writer = SummaryWriter(tensorboard_log_dir)
-                print(f"TensorBoard logging enabled: {tensorboard_log_dir}")
-                print(f"  View with: tensorboard --logdir={log_dir}")
+                # Use run_dir if provided (resume case), otherwise create new one
+                if run_dir is not None:
+                    tensorboard_log_dir = run_dir
+                    print(f"TensorBoard resuming in: {tensorboard_log_dir}")
+                else:
+                    # Will be initialized when run_dir is set on first checkpoint
+                    tensorboard_log_dir = None
+                
+                if tensorboard_log_dir is not None:
+                    self.writer = SummaryWriter(tensorboard_log_dir)
+                    print(f"TensorBoard logging enabled: {tensorboard_log_dir}")
+                    print(f"  View with: tensorboard --logdir={config.tensorboard.log_dir}")
     
     def _get_pytorch_dtype(self):
         """Convert dtype string to PyTorch dtype."""
@@ -128,7 +142,9 @@ class Trainer:
         """Log training progress."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         avg_loss = self.loss_acc.item() / self.loss_steps if self.loss_steps > 0 else 0
-        print(f"[{timestamp}] Step: {step}/{max_iters} loss {avg_loss:.3}")
+        log_msg = f"[{timestamp}] Step: {step}/{max_iters} loss {avg_loss:.3}"
+        print(log_msg)
+        self._log(log_msg)
         
         # Log to TensorBoard
         if self.writer is not None:
@@ -158,8 +174,33 @@ class Trainer:
         self.loss_steps += 1
     
     def set_run_directory(self, run_dir):
-        """Set the current run directory for checkpoints."""
+        """Set the current run directory for checkpoints and initialize TensorBoard if needed."""
+        import os
         self.current_run_dir = run_dir
+        
+        # Initialize text log file if not already done
+        if self.log_file is None:
+            os.makedirs(run_dir, exist_ok=True)
+            log_path = os.path.join(run_dir, "training.log")
+            self.log_file = open(log_path, 'a')
+            self._log(f"{'='*80}")
+            self._log(f"Training session started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            self._log(f"{'='*80}")
+        
+        # Initialize TensorBoard writer if not already done and TensorBoard is enabled
+        if (self.writer is None and 
+            hasattr(self.config, 'tensorboard') and 
+            self.config.tensorboard.enabled and 
+            TENSORBOARD_AVAILABLE):
+            self.writer = SummaryWriter(run_dir)
+            print(f"TensorBoard logging enabled: {run_dir}")
+            print(f"  View with: tensorboard --logdir={self.config.tensorboard.log_dir}")
+    
+    def _log(self, message):
+        """Write a message to the log file."""
+        if self.log_file is not None:
+            self.log_file.write(message + '\n')
+            self.log_file.flush()  # Ensure immediate write
     
     def get_run_directory(self):
         """Get the current run directory."""
@@ -198,6 +239,11 @@ class Trainer:
             self.writer.add_text(tag, text, step)
     
     def close(self):
-        """Close the TensorBoard writer."""
+        """Close the TensorBoard writer and log file."""
+        if self.log_file is not None:
+            self._log(f"{'='*80}")
+            self._log(f"Training session ended at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            self._log(f"{'='*80}")
+            self.log_file.close()
         if self.writer is not None:
             self.writer.close()

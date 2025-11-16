@@ -6,18 +6,21 @@ The training configuration has been refactored to use a YAML configuration file 
 
 ## Checkpoint Management
 
-Each training run automatically creates a timestamped directory to organize checkpoints:
+Each training run automatically creates a timestamped directory to organize all run artifacts:
 
 ### Directory Structure
 ```
-checkpoints/
-├── run_20251108_143022/
-│   ├── config.yaml          # Copy of the config used for this run
+runs/
+├── run_20251115_143022/
+│   ├── config.yaml              # Copy of the config used for this run
+│   ├── training.log             # Text log of training output
 │   ├── checkpoint_500.pt
 │   ├── checkpoint_1000.pt
-│   └── checkpoint_1500.pt
-└── run_20251108_150345/
+│   ├── checkpoint_1500.pt
+│   └── events.out.tfevents.*    # TensorBoard event files
+└── run_20251115_150345/
     ├── config.yaml
+    ├── training.log
     ├── checkpoint_500.pt
     └── ...
 ```
@@ -70,7 +73,7 @@ python train.py --config my_experiment.yaml
 To resume from a checkpoint, edit your config file or create a new one:
 ```yaml
 training:
-  resume_from_checkpoint: "checkpoints/run_20251108_143022/checkpoint_1000.pt"
+  resume_from_checkpoint: "runs/run_20251115_143022/checkpoint_1000.pt"
 ```
 
 Then run:
@@ -99,7 +102,7 @@ The training will continue in the same `run_YYYYMMDD_HHMMSS` directory.
 - `log_freq`: Logging frequency (default: 100)
 - `test_freq`: Test/evaluation frequency (default: 500)
 - `checkpoint_freq`: Checkpoint save frequency (default: 500)
-- `checkpoint_dir`: Directory to save checkpoints (default: "checkpoints")
+- `runs_dir`: Directory to save training runs (default: "runs")
 - `resume_from_checkpoint`: Path to checkpoint to resume from (default: null)
 - `debug`: Enable debug mode (default: false)
 

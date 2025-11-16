@@ -87,11 +87,17 @@ def main():
     train_files, test_files = split_parquet_files(parquet_files, train_ratio=0.9)
     
     # Determine run directory for this training session
-    current_run_dir = None
+    run_dir = None
     if config.training.resume_from_checkpoint is not None:
         # Resuming from checkpoint - use the same directory as the checkpoint
-        current_run_dir = os.path.dirname(config.training.resume_from_checkpoint)
-        print(f"Resuming training in directory: {current_run_dir}")
+        run_dir = os.path.dirname(config.training.resume_from_checkpoint)
+        print(f"Resuming training in directory: {run_dir}")
+    else:
+        # New training run - create timestamped directory
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(config.training.runs_dir, f"run_{timestamp}")
+        print(f"Creating new run directory: {run_dir}")
 
     # Check low precision requirements
     check_low_precision_requirements(config, device)
@@ -132,10 +138,8 @@ def main():
     # Create optimizer with optional 4-bit support
     optimizer = create_optimizer(model, config)
 
-    # Create trainer
-    trainer = Trainer(model, optimizer, config, device, dtype, scaler, fp8_recipe)
-    if current_run_dir:
-        trainer.set_run_directory(current_run_dir)
+    # Create trainer with run directory
+    trainer = Trainer(model, optimizer, config, device, dtype, scaler, fp8_recipe, run_dir=run_dir)
 
     # Resume from checkpoint if specified
     start_step = 0
@@ -174,7 +178,7 @@ def main():
             
             # Checkpointing
             if trainer.should_checkpoint(step):
-                checkpoint_path, updated_run_dir = save_checkpoint(
+                checkpoint_path = save_checkpoint(
                     model, 
                     optimizer, 
                     step, 
@@ -182,12 +186,10 @@ def main():
                     scaler,
                     dtype,
                     config,
-                    checkpoint_dir=trainer.get_run_directory(),
-                    current_run_dir=trainer.get_run_directory(),
+                    run_dir=run_dir,
                     is_first=trainer.is_first_checkpoint(),
                     tokenizer_config=tokenizer_config_dict
                 )
-                trainer.set_run_directory(updated_run_dir)
                 trainer.mark_first_checkpoint_saved()
             
             # Evaluation
@@ -210,8 +212,7 @@ def main():
         scaler,
         dtype,
         config,
-        checkpoint_dir=trainer.get_run_directory(),
-        current_run_dir=trainer.get_run_directory(),
+        run_dir=run_dir,
         tokenizer_config=tokenizer_config_dict
     )
 

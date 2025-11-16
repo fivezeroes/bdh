@@ -49,7 +49,7 @@ def eval_model(model, device, tokenizer=None, max_new_tokens=100, top_k=3):
 
 
 def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config, 
-                    checkpoint_dir=None, current_run_dir=None, is_first=False, tokenizer_config=None):
+                    run_dir, is_first=False, tokenizer_config=None):
     """
     Save model checkpoint.
     
@@ -61,25 +61,15 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
         scaler: Gradient scaler (for mixed precision)
         dtype: Data type being used
         config: Config object
-        checkpoint_dir: Directory to save checkpoint in (optional)
-        current_run_dir: Current run directory (will be created if None on first save)
+        run_dir: Run directory to save checkpoint in (shared with TensorBoard)
         is_first: Whether this is the first checkpoint (saves config file)
         tokenizer_config: Tokenizer config dict to save in checkpoint
         
     Returns:
-        Tuple of (checkpoint_path, updated_run_dir)
+        checkpoint_path: Path to the saved checkpoint
     """
-    # Create run directory on first checkpoint if needed
-    if checkpoint_dir is None:
-        if current_run_dir is None:
-            # First checkpoint - create timestamped directory
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            current_run_dir = os.path.join(config.training.checkpoint_dir, f"run_{timestamp}")
-            print(f"Creating run directory: {current_run_dir}")
-        checkpoint_dir = current_run_dir
-    
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{step}.pt")
+    os.makedirs(run_dir, exist_ok=True)
+    checkpoint_path = os.path.join(run_dir, f"checkpoint_{step}.pt")
     
     # Get the underlying model if it's been compiled
     model_to_save = model._orig_mod if hasattr(model, '_orig_mod') else model
@@ -99,11 +89,11 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
     
     # Save config file with the first checkpoint (from memory, not disk)
     if is_first:
-        config_copy_path = os.path.join(checkpoint_dir, "config.yaml")
+        config_copy_path = os.path.join(run_dir, "config.yaml")
         config.save_to_yaml(config_copy_path)
         print(f"Config saved: {config_copy_path}")
     
-    return checkpoint_path, current_run_dir
+    return checkpoint_path
 
 
 def load_checkpoint(checkpoint_path, model, optimizer, scaler, dtype, device):

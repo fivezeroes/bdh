@@ -31,7 +31,7 @@ class TrainingConfig:
     log_freq: int = 100
     test_freq: int = 500
     checkpoint_freq: int = 500
-    checkpoint_dir: str = "checkpoints"
+    runs_dir: str = "runs"
     resume_from_checkpoint: Optional[str] = None
     debug: bool = False
 
@@ -72,9 +72,14 @@ class FP8Config:
 
 @dataclass
 class TensorBoardConfig:
-    """TensorBoard configuration."""
+    """TensorBoard configuration.
+    
+    Note: TensorBoard logs are saved in the same directory as checkpoints.
+    Each training run creates a timestamped directory (e.g., runs/run_20251115_123456)
+    containing checkpoints, TensorBoard event files, and training logs.
+    """
     enabled: bool = True
-    log_dir: str = "runs"
+    log_dir: str = "runs"  # Base directory (same as training.runs_dir)
     log_gradients: bool = False
     log_weights: bool = False
 

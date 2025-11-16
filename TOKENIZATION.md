@@ -176,7 +176,7 @@ The tokenizer configuration is automatically saved in checkpoints and restored d
 The inference script automatically loads the tokenizer from the checkpoint:
 
 ```bash
-python prompt.py checkpoints/checkpoint_1000.pt --prompt "Hello world"
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "Hello world"
 ```
 
 If the checkpoint has tokenizer info, it will be used automatically. Otherwise, it falls back to byte-level encoding.
@@ -184,7 +184,7 @@ If the checkpoint has tokenizer info, it will be used automatically. Otherwise, 
 ### Interactive Mode
 
 ```bash
-python prompt.py checkpoints/checkpoint_1000.pt
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt
 ```
 
 The interactive mode shows which tokenizer is active:

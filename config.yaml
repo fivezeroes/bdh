@@ -20,14 +20,14 @@ training:
   log_freq: 100
   test_freq: 1000
   checkpoint_freq: 10000
-  checkpoint_dir: "checkpoints"
-  resume_from_checkpoint: null #"checkpoints/checkpoint_1500.pt"  # Set to checkpoint path to resume, e.g., "checkpoints/checkpoint_1000.pt"
+  runs_dir: "runs"
+  resume_from_checkpoint: null #"runs/run_20251115_123456/checkpoint_1500.pt"  # Set to checkpoint path to resume
   debug: false
 
 # TensorBoard Configuration
 tensorboard:
   enabled: true  # Enable TensorBoard logging
-  log_dir: "runs"  # Directory for TensorBoard logs
+  log_dir: "runs"  # Base directory for runs (contains checkpoints, logs, and TensorBoard events)
   log_gradients: true  # Log gradient histograms (can be expensive)
   log_weights: true  # Log weight histograms (can be expensive)
 
