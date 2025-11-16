@@ -152,3 +152,108 @@ def check_low_precision_requirements(config, device):
         print(f"  - QUANTIZATION_TYPE: {config.low_precision.quantization_type}")
         print(f"  - COMPUTE_DTYPE: {config.low_precision.compute_dtype}")
         print(f"  - USE_DOUBLE_QUANT: {config.low_precision.use_double_quant}")
+
+
+def get_scheduler(optimizer, config):
+    """
+    Create learning rate scheduler based on configuration.
+    
+    Args:
+        optimizer: Optimizer to create scheduler for
+        config: Config object with scheduler settings
+        
+    Returns:
+        Learning rate scheduler instance or None if scheduler type is "none"
+        
+    Raises:
+        ValueError: If scheduler configuration is invalid
+    """
+    scheduler_type = config.scheduler.type.lower()
+    
+    if scheduler_type == "none":
+        return None
+    
+    # Validate required parameters for specific scheduler types
+    if scheduler_type == "cosine" and config.scheduler.T_max is None:
+        raise ValueError("T_max is required for cosine scheduler. Set scheduler.T_max in config (typically max_iters - warmup_steps)")
+    
+    # Create warmup scheduler if warmup_steps > 0
+    warmup_scheduler = None
+    if config.scheduler.warmup_steps > 0:
+        if config.scheduler.warmup_type == "linear":
+            # Linear warmup from 0 to initial LR
+            warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+                optimizer,
+                start_factor=1e-10,  # Start from very small LR
+                end_factor=1.0,  # End at initial LR
+                total_iters=config.scheduler.warmup_steps
+            )
+        elif config.scheduler.warmup_type == "constant":
+            # Constant warmup (immediate jump to initial LR)
+            warmup_scheduler = torch.optim.lr_scheduler.ConstantLR(
+                optimizer,
+                factor=1.0,
+                total_iters=config.scheduler.warmup_steps
+            )
+        else:
+            raise ValueError(f"Invalid warmup_type: {config.scheduler.warmup_type}. Options: 'linear', 'constant'")
+    
+    # Create main scheduler
+    main_scheduler = None
+    if scheduler_type == "cosine":
+        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=config.scheduler.T_max,
+            eta_min=config.scheduler.min_lr
+        )
+        print(f"Created CosineAnnealingLR scheduler (T_max={config.scheduler.T_max}, min_lr={config.scheduler.min_lr})")
+    
+    elif scheduler_type == "linear":
+        # Linear decay from initial LR to min_lr over max_iters
+        # Note: This assumes the scheduler steps once per optimizer step
+        main_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=1.0,
+            end_factor=config.scheduler.min_lr / config.training.learning_rate if config.training.learning_rate > 0 else 0.0,
+            total_iters=config.training.max_iters - config.scheduler.warmup_steps
+        )
+        print(f"Created LinearLR scheduler (min_lr={config.scheduler.min_lr})")
+    
+    elif scheduler_type == "exponential":
+        main_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer,
+            gamma=config.scheduler.gamma
+        )
+        print(f"Created ExponentialLR scheduler (gamma={config.scheduler.gamma})")
+    
+    elif scheduler_type == "plateau":
+        main_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',  # Reduce LR when validation loss stops decreasing
+            factor=config.scheduler.factor,
+            patience=config.scheduler.patience,
+            threshold=config.scheduler.threshold,
+            min_lr=config.scheduler.min_lr
+        )
+        print(f"Created ReduceLROnPlateau scheduler (patience={config.scheduler.patience}, factor={config.scheduler.factor})")
+    
+    else:
+        raise ValueError(f"Invalid scheduler type: {scheduler_type}. Options: 'none', 'cosine', 'linear', 'exponential', 'plateau'")
+    
+    # Combine warmup and main scheduler if warmup is enabled
+    if warmup_scheduler is not None and main_scheduler is not None:
+        # Use SequentialLR to chain warmup -> main scheduler
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[config.scheduler.warmup_steps]
+        )
+        print(f"Chained warmup ({config.scheduler.warmup_type}) for {config.scheduler.warmup_steps} steps -> {scheduler_type} scheduler")
+        return scheduler
+    elif warmup_scheduler is not None:
+        # Only warmup, no main scheduler
+        return warmup_scheduler
+    else:
+        # Only main scheduler, no warmup
+        return main_scheduler
+

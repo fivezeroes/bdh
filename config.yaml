@@ -17,7 +17,7 @@ training:
   max_iters: 1000000
   learning_rate: 3.0e-4
   weight_decay: 0.01
-  gradient_accumulation_steps: 1  # Number of micro-batches to accumulate before optimizer step. Effective batch size = batch_size * gradient_accumulation_steps
+  gradient_accumulation_steps: 32  # Number of micro-batches to accumulate before optimizer step. Effective batch size = batch_size * gradient_accumulation_steps
   log_freq: 100
   test_freq: 1000
   checkpoint_freq: 10000
@@ -31,6 +31,7 @@ tensorboard:
   log_dir: "runs"  # Base directory for runs (contains checkpoints, logs, and TensorBoard events)
   log_gradients: true  # Log gradient histograms (can be expensive)
   log_weights: true  # Log weight histograms (can be expensive)
+  log_scheduler_state: false  # Log scheduler internals like T_max, last_epoch (can be expensive)
 
 # DataLoader Configuration
 dataloader:
@@ -42,6 +43,8 @@ dataloader:
 dataset:
   parquet_dir: "/mnt/scratch/fineweb/data/CC-MAIN-2025-26"
   max_cached_files: 5  # Keep only a few parquet files open
+  val_split: 0.1  # Fraction of data files to use for validation (0.0-1.0)
+  val_batches: 100  # Number of validation batches to evaluate (subsampling for efficiency)
 
 # Low-Precision Training Configuration
 # 
@@ -117,3 +120,55 @@ tokenizer:
   pad_token_id: null  # Auto-detected from tokenizer if null
   eos_token_id: null  # Auto-detected from tokenizer if null
   bos_token_id: null  # Auto-detected from tokenizer if null
+
+# Learning Rate Scheduler Configuration
+# 
+# Adaptive learning rate scheduling improves training convergence and performance.
+# Different scheduler types offer different optimization strategies:
+# 
+# 1. None (type: "none") - Default, maintains constant learning rate:
+#    - No learning rate adjustment
+#    - Backward compatible with existing training
+#    - Simplest approach, good baseline
+# 
+# 2. Cosine Annealing (type: "cosine") - Smooth decay with periodic restarts:
+#    - Smoothly decreases LR following cosine curve
+#    - T_max: REQUIRED - period of cosine annealing (typically max_iters - warmup_steps)
+#    - min_lr: minimum learning rate at end of cycle
+#    - Good for: Long training runs, fine-tuning
+#    - Example: T_max=100000, min_lr=1e-6
+# 
+# 3. Linear Decay (type: "linear") - Gradual linear reduction:
+#    - Linearly decreases LR from initial to min_lr
+#    - min_lr: target minimum learning rate
+#    - Good for: Simple decay strategy
+# 
+# 4. Exponential Decay (type: "exponential") - Multiplicative reduction:
+#    - LR multiplied by gamma each step
+#    - gamma: decay factor (e.g., 0.95 = 5% reduction per step)
+#    - Good for: Aggressive decay
+# 
+# 5. Reduce on Plateau (type: "plateau") - Adaptive based on validation loss:
+#    - Reduces LR when validation loss stops improving
+#    - patience: number of evaluations without improvement before reducing
+#    - factor: multiply LR by this when reducing (e.g., 0.1 = 10x reduction)
+#    - threshold: minimum change to qualify as improvement
+#    - Requires validation loss computation (controlled by val_batches)
+#    - Good for: Adaptive training, avoiding overfitting
+# 
+# Warmup Phase (optional, all scheduler types):
+#    - warmup_steps: number of steps to gradually increase LR from 0 to initial LR
+#    - warmup_type: "linear" (gradual) or "constant" (immediate jump)
+#    - Helps stabilize early training
+#    - Recommended: 1000-5000 steps for large models
+#
+scheduler:
+  type: "plateau"  # Options: "none", "cosine", "linear", "exponential", "plateau"
+  warmup_steps: 0  # Number of warmup steps (absolute count, 0 = no warmup)
+  warmup_type: "linear"  # Options: "linear", "constant"
+  min_lr: 0.0  # Minimum learning rate for cosine/linear schedulers
+  T_max: null  # REQUIRED for cosine: period of annealing (e.g., max_iters - warmup_steps)
+  gamma: 0.95  # Exponential decay factor (LR *= gamma each step)
+  patience: 10  # Plateau: evaluations without improvement before reducing LR
+  factor: 0.1  # Plateau: factor to reduce LR by (new_lr = lr * factor)
+  threshold: 1e-4  # Plateau: minimum change to count as improvement

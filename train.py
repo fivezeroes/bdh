@@ -23,9 +23,10 @@ from optimization import (
     create_fp8_recipe,
     create_optimizer,
     prepare_model_for_4bit_training,
+    get_scheduler,
 )
 from trainer import Trainer
-from training_utils import eval_model, load_checkpoint, save_checkpoint
+from training_utils import eval_model, load_checkpoint, save_checkpoint, compute_validation_loss
 from logging_utils import setup_logging, teardown_logging
 
 def main():
@@ -104,7 +105,7 @@ def main():
 
     # Fetch and split data
     parquet_files = fetch_parquet_files(config.dataset.parquet_dir)
-    train_files, test_files = split_parquet_files(parquet_files, train_ratio=0.9)
+    train_files, test_files = split_parquet_files(parquet_files, train_ratio=1.0 - config.dataset.val_split)
 
     # Check low precision requirements
     check_low_precision_requirements(config, device)
@@ -132,6 +133,24 @@ def main():
         persistent_workers=True,  # Keep workers alive between epochs
         prefetch_factor=config.dataloader.prefetch_factor,  # Prefetch batches per worker
     )
+    
+    # Create validation dataset and loader
+    print(f"Creating validation dataset...")
+    val_dataset = ParquetDataset(
+        test_files,
+        config.training.block_size,
+        tokenizer=tokenizer
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.training.batch_size,
+        shuffle=False,  # No need to shuffle validation data
+        num_workers=config.dataloader.num_workers,
+        pin_memory=config.dataloader.pin_memory,
+        persistent_workers=True,
+        prefetch_factor=config.dataloader.prefetch_factor,
+    )
 
     # Create and prepare model
     model = bdh.BDH(config.to_bdh_config()).to(device)
@@ -144,9 +163,18 @@ def main():
     
     # Create optimizer with optional 4-bit support
     optimizer = create_optimizer(model, config)
+    
+    # Create learning rate scheduler
+    scheduler = get_scheduler(optimizer, config)
+    if scheduler is not None:
+        print(f"Learning rate scheduler created: {config.scheduler.type}")
+        if config.scheduler.warmup_steps > 0:
+            print(f"  Warmup: {config.scheduler.warmup_steps} steps ({config.scheduler.warmup_type})")
+    else:
+        print("No learning rate scheduler (type='none')")
 
-    # Create trainer with run directory
-    trainer = Trainer(model, optimizer, config, device, dtype, scaler, fp8_recipe, run_dir=run_dir)
+    # Create trainer with run directory and scheduler
+    trainer = Trainer(model, optimizer, config, device, dtype, scaler, fp8_recipe, run_dir=run_dir, scheduler=scheduler)
 
     # Resume from checkpoint if specified
     start_step = 0
@@ -157,7 +185,8 @@ def main():
             optimizer, 
             scaler, 
             dtype, 
-            device
+            device,
+            scheduler=scheduler
         )
         trainer.set_accum_state(accum_step)
 
@@ -180,6 +209,20 @@ def main():
             loss = trainer.train_step(x, y)
             trainer.update_loss_accumulator(loss)
             
+            # Step scheduler after optimizer step (respects gradient accumulation)
+            # Only step when optimizer actually stepped (accum_step == 0 after step)
+            if trainer.get_accum_state() == 0 and scheduler is not None:
+                # Check if we need validation loss for plateau scheduler
+                val_loss = None
+                if config.scheduler.type == "plateau" and trainer.should_eval(step):
+                    val_loss = compute_validation_loss(
+                        model, val_loader, device, config, num_batches=config.dataset.val_batches
+                    )
+                    trainer.last_val_loss = val_loss  # Store for logging
+                    print(f"Validation loss: {val_loss:.4f}")
+                
+                trainer.scheduler_step(val_loss)
+            
             # Logging
             if trainer.should_log(step):
                 trainer.log_progress(step, config.training.max_iters)
@@ -197,7 +240,8 @@ def main():
                     run_dir=trainer.get_run_directory(),
                     is_first=trainer.is_first_checkpoint(),
                     tokenizer_config=tokenizer_config_dict,
-                    accum_step=trainer.get_accum_state()
+                    accum_step=trainer.get_accum_state(),
+                    scheduler=scheduler
                 )
                 trainer.mark_first_checkpoint_saved()
             
@@ -225,7 +269,8 @@ def main():
         config,
         run_dir=trainer.get_run_directory(),
         tokenizer_config=tokenizer_config_dict,
-        accum_step=trainer.get_accum_state()
+        accum_step=trainer.get_accum_state(),
+        scheduler=scheduler
     )
 
 

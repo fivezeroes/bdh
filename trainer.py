@@ -23,7 +23,7 @@ except ImportError:
 class Trainer:
     """Encapsulates the training loop for BDH model."""
     
-    def __init__(self, model, optimizer, config, device, dtype, scaler, fp8_recipe=None, run_dir=None):
+    def __init__(self, model, optimizer, config, device, dtype, scaler, fp8_recipe=None, run_dir=None, scheduler=None):
         """
         Initialize trainer.
         
@@ -36,6 +36,7 @@ class Trainer:
             scaler: Gradient scaler for mixed precision
             fp8_recipe: Optional FP8 recipe for Transformer Engine
             run_dir: Optional run directory for checkpoints and TensorBoard (if None, will be created on first checkpoint)
+            scheduler: Optional learning rate scheduler
         """
         self.model = model
         self.optimizer = optimizer
@@ -44,6 +45,7 @@ class Trainer:
         self.dtype = dtype
         self.scaler = scaler
         self.fp8_recipe = fp8_recipe
+        self.scheduler = scheduler
         
         # Set up autocast context
         self.ctx = (
@@ -57,6 +59,7 @@ class Trainer:
         self.first_checkpoint_saved = False
         self.loss_acc = 0
         self.loss_steps = 0
+        self.last_val_loss = None  # Track last validation loss for logging
         
         # Gradient accumulation state
         self.gradient_accumulation_steps = config.training.gradient_accumulation_steps
@@ -146,6 +149,35 @@ class Trainer:
         """Check if should evaluate at this step."""
         return step % self.config.training.test_freq == 0 and step > 0
     
+    def scheduler_step(self, val_loss=None):
+        """
+        Step the learning rate scheduler.
+        
+        Args:
+            val_loss: Optional validation loss (required for ReduceLROnPlateau scheduler)
+        """
+        if self.scheduler is None:
+            return
+        
+        # Check if this is a ReduceLROnPlateau scheduler (metric-based)
+        is_plateau_scheduler = isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
+        
+        # For SequentialLR, check if the current active scheduler is ReduceLROnPlateau
+        if isinstance(self.scheduler, torch.optim.lr_scheduler.SequentialLR):
+            # SequentialLR has _schedulers list, check the last one (main scheduler after warmup)
+            if len(self.scheduler._schedulers) > 0:
+                last_scheduler = self.scheduler._schedulers[-1]
+                is_plateau_scheduler = isinstance(last_scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)
+        
+        if is_plateau_scheduler:
+            # Plateau scheduler requires validation loss
+            if val_loss is not None:
+                self.scheduler.step(val_loss)
+            # else: skip stepping if no validation loss provided
+        else:
+            # Step-based schedulers don't need validation loss
+            self.scheduler.step()
+    
     def log_progress(self, step, max_iters):
         """Log training progress."""
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -156,9 +188,21 @@ class Trainer:
         if self.writer is not None:
             self.writer.add_scalar('Loss/train', avg_loss, step)
             
+            # Log validation loss if available
+            if self.last_val_loss is not None:
+                self.writer.add_scalar('Loss/validation', self.last_val_loss, step)
+            
             # Log learning rate
             current_lr = self.optimizer.param_groups[0]['lr']
             self.writer.add_scalar('Learning_Rate', current_lr, step)
+            
+            # Log scheduler state if enabled
+            if hasattr(self.config, 'tensorboard') and self.config.tensorboard.log_scheduler_state and self.scheduler is not None:
+                # Log useful scheduler internals
+                state_dict = self.scheduler.state_dict()
+                for key, value in state_dict.items():
+                    if isinstance(value, (int, float)):
+                        self.writer.add_scalar(f'Scheduler/{key}', value, step)
             
             # Log gradient and weight histograms if enabled
             if hasattr(self.config, 'tensorboard'):

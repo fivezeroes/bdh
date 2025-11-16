@@ -50,6 +50,8 @@ class DatasetConfig:
     """Dataset configuration."""
     parquet_dir: str = "/Volumes/Data/fineweb/data/CC-MAIN-2025-26"
     max_cached_files: int = 5
+    val_split: float = 0.1  # Fraction of data to use for validation
+    val_batches: int = 100  # Number of validation batches to evaluate (subsampling)
 
 
 @dataclass
@@ -83,6 +85,7 @@ class TensorBoardConfig:
     log_dir: str = "runs"  # Base directory (same as training.runs_dir)
     log_gradients: bool = False
     log_weights: bool = False
+    log_scheduler_state: bool = False  # Log scheduler internals (can be expensive)
 
 
 @dataclass
@@ -96,6 +99,26 @@ class TokenizerConfig:
 
 
 @dataclass
+class SchedulerConfig:
+    """Learning rate scheduler configuration."""
+    type: str = "none"  # Options: "none", "cosine", "linear", "exponential", "plateau"
+    warmup_steps: int = 0  # Number of steps for warmup phase (absolute count)
+    warmup_type: str = "linear"  # Options: "linear", "constant"
+    min_lr: float = 0.0  # Minimum learning rate (for cosine/linear decay)
+    
+    # Cosine annealing parameters
+    T_max: Optional[int] = None  # Required for cosine: period of cosine annealing
+    
+    # Exponential decay parameters
+    gamma: float = 0.1  # Multiplicative factor for exponential decay
+    
+    # ReduceLROnPlateau parameters
+    patience: int = 10  # Number of epochs with no improvement before reducing LR
+    factor: float = 0.1  # Factor by which to reduce LR
+    threshold: float = 1e-4  # Threshold for measuring improvement
+
+
+@dataclass
 class Config:
     """Complete configuration for BDH training."""
     model: ModelConfig
@@ -106,6 +129,7 @@ class Config:
     fp8: FP8Config
     tensorboard: TensorBoardConfig
     tokenizer: TokenizerConfig
+    scheduler: SchedulerConfig
 
     @classmethod
     def from_yaml(cls, config_path: str = "config.yaml") -> "Config":
@@ -125,6 +149,7 @@ class Config:
             fp8=FP8Config(**config_dict.get('fp8', {})),
             tensorboard=TensorBoardConfig(**config_dict.get('tensorboard', {})),
             tokenizer=TokenizerConfig(**config_dict.get('tokenizer', {})),
+            scheduler=SchedulerConfig(**config_dict.get('scheduler', {})),
         )
     
     @classmethod
@@ -139,6 +164,7 @@ class Config:
             fp8=FP8Config(),
             tensorboard=TensorBoardConfig(),
             tokenizer=TokenizerConfig(),
+            scheduler=SchedulerConfig(),
         )
     
     def to_bdh_config(self):
@@ -165,6 +191,7 @@ class Config:
             'fp8': dataclasses.asdict(self.fp8),
             'tensorboard': dataclasses.asdict(self.tensorboard),
             'tokenizer': dataclasses.asdict(self.tokenizer),
+            'scheduler': dataclasses.asdict(self.scheduler),
         }
     
     def save_to_yaml(self, config_path: str) -> None:
