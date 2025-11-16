@@ -6,6 +6,8 @@ import argparse
 import os
 import dataclasses
 
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+
 import bdh
 import config as cfg
 import torch
@@ -24,8 +26,6 @@ from optimization import (
 )
 from trainer import Trainer
 from training_utils import eval_model, load_checkpoint, save_checkpoint
-
-os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 def main():
     """Main training function."""
