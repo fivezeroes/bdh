@@ -96,6 +96,11 @@ def main():
     print(f"Using device: {device} with dtype {dtype}")
     if fp8_recipe:
         print(f"FP8 training enabled with format: {config.fp8.format}")
+    
+    # Print gradient accumulation info
+    effective_batch_size = config.training.batch_size * config.training.gradient_accumulation_steps
+    print(f"Batch size: {config.training.batch_size}, Gradient accumulation steps: {config.training.gradient_accumulation_steps}")
+    print(f"Effective batch size: {effective_batch_size}")
 
     # Fetch and split data
     parquet_files = fetch_parquet_files(config.dataset.parquet_dir)
@@ -146,7 +151,7 @@ def main():
     # Resume from checkpoint if specified
     start_step = 0
     if config.training.resume_from_checkpoint is not None:
-        start_step = load_checkpoint(
+        start_step, accum_step = load_checkpoint(
             config.training.resume_from_checkpoint, 
             model, 
             optimizer, 
@@ -154,6 +159,7 @@ def main():
             dtype, 
             device
         )
+        trainer.set_accum_state(accum_step)
 
     # Training loop with DataLoader
     train_iter = iter(train_loader)
@@ -188,9 +194,10 @@ def main():
                     scaler,
                     dtype,
                     config,
-                    run_dir=run_dir,
+                    run_dir=trainer.get_run_directory(),
                     is_first=trainer.is_first_checkpoint(),
-                    tokenizer_config=tokenizer_config_dict
+                    tokenizer_config=tokenizer_config_dict,
+                    accum_step=trainer.get_accum_state()
                 )
                 trainer.mark_first_checkpoint_saved()
             
@@ -216,8 +223,9 @@ def main():
         scaler,
         dtype,
         config,
-        run_dir=run_dir,
-        tokenizer_config=tokenizer_config_dict
+        run_dir=trainer.get_run_directory(),
+        tokenizer_config=tokenizer_config_dict,
+        accum_step=trainer.get_accum_state()
     )
 
 

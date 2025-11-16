@@ -58,6 +58,14 @@ class Trainer:
         self.loss_acc = 0
         self.loss_steps = 0
         
+        # Gradient accumulation state
+        self.gradient_accumulation_steps = config.training.gradient_accumulation_steps
+        self.accum_step = 0  # Current step within accumulation window
+        
+        # Gradient accumulation state
+        self.gradient_accumulation_steps = config.training.gradient_accumulation_steps
+        self.accum_step = 0  # Current step within accumulation window
+        
         # Set up TensorBoard
         self.writer = None
         if hasattr(config, 'tensorboard') and config.tensorboard.enabled:
@@ -89,7 +97,7 @@ class Trainer:
     
     def train_step(self, x, y):
         """
-        Execute a single training step.
+        Execute a single training step (micro-batch).
         
         Args:
             x: Input tensor
@@ -107,13 +115,24 @@ class Trainer:
             with self.ctx:
                 logits, loss = self.model(x, y)
         
-        # Backward pass
-        self.scaler.scale(loss).backward()
-        self.scaler.step(self.optimizer)
-        self.scaler.update()
-        self.optimizer.zero_grad()
+        # Scale loss by accumulation steps for correct gradient magnitude
+        loss = loss / self.gradient_accumulation_steps
         
-        return loss
+        # Backward pass (always accumulate gradients)
+        self.scaler.scale(loss).backward()
+        
+        # Increment accumulation counter
+        self.accum_step += 1
+        
+        # Only update optimizer after accumulating specified number of gradients
+        if self.accum_step >= self.gradient_accumulation_steps:
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+            self.optimizer.zero_grad()
+            self.accum_step = 0  # Reset accumulation counter
+        
+        # Return unscaled loss for logging (multiply back)
+        return loss * self.gradient_accumulation_steps
     
     def should_log(self, step):
         """Check if should log at this step."""
@@ -185,6 +204,14 @@ class Trainer:
     def is_first_checkpoint(self):
         """Check if this is the first checkpoint."""
         return not self.first_checkpoint_saved
+    
+    def get_accum_state(self):
+        """Get current gradient accumulation state for checkpointing."""
+        return self.accum_step
+    
+    def set_accum_state(self, accum_step):
+        """Set gradient accumulation state when resuming from checkpoint."""
+        self.accum_step = accum_step
     
     def log_scalar(self, tag, value, step):
         """

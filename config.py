@@ -28,6 +28,7 @@ class TrainingConfig:
     max_iters: int = 3000
     learning_rate: float = 1e-3
     weight_decay: float = 0.1
+    gradient_accumulation_steps: int = 1
     log_freq: int = 100
     test_freq: int = 500
     checkpoint_freq: int = 500

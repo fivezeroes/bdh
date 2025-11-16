@@ -14,7 +14,7 @@ tensorboard
 # - For SentencePiece: pip install sentencepiece
 
 # Uncomment the tokenizers you want to use:
-# tiktoken>=0.5.0  # GPT-style tokenization (gpt2, cl100k_base, etc.)
+tiktoken>=0.5.0  # GPT-style tokenization (gpt2, cl100k_base, etc.)
 # transformers>=4.30.0  # HuggingFace tokenizers (BPE, WordPiece, etc.)
 # sentencepiece>=0.1.99  # SentencePiece tokenization (multilingual)
 

@@ -53,7 +53,7 @@ def eval_model(model, device, tokenizer=None, max_new_tokens=100, top_k=3):
 
 
 def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config, 
-                    run_dir, is_first=False, tokenizer_config=None):
+                    run_dir, is_first=False, tokenizer_config=None, accum_step=0):
     """
     Save model checkpoint.
     
@@ -68,6 +68,7 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
         run_dir: Run directory to save checkpoint in (shared with TensorBoard)
         is_first: Whether this is the first checkpoint (saves config file)
         tokenizer_config: Tokenizer config dict to save in checkpoint
+        accum_step: Current gradient accumulation step (for resuming mid-accumulation)
         
     Returns:
         checkpoint_path: Path to the saved checkpoint
@@ -86,6 +87,7 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
         'config': config.to_bdh_config(),
         'scaler_state_dict': scaler.state_dict() if dtype == "float16" else None,
         'tokenizer_config': tokenizer_config,
+        'accum_step': accum_step,  # Save accumulation state for proper resumption
     }
     
     torch.save(checkpoint, checkpoint_path)
@@ -102,7 +104,7 @@ def save_checkpoint(model, optimizer, step, loss, scaler, dtype, config,
 
 def load_checkpoint(checkpoint_path, model, optimizer, scaler, dtype, device):
     """
-    Load model checkpoint and return starting step.
+    Load model checkpoint and return starting step and accumulation state.
     
     Args:
         checkpoint_path: Path to checkpoint file
@@ -113,7 +115,9 @@ def load_checkpoint(checkpoint_path, model, optimizer, scaler, dtype, device):
         device: Device to load checkpoint on
         
     Returns:
-        Starting step number (checkpoint step + 1)
+        Tuple of (starting_step, accum_step)
+        - starting_step: Step number to continue from (checkpoint step + 1)
+        - accum_step: Gradient accumulation step (0 if not in checkpoint)
         
     Raises:
         FileNotFoundError: If checkpoint file doesn't exist
@@ -134,6 +138,10 @@ def load_checkpoint(checkpoint_path, model, optimizer, scaler, dtype, device):
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
     
     start_step = checkpoint['step'] + 1
-    print(f"Resumed from step {checkpoint['step']} (continuing from step {start_step})")
+    accum_step = checkpoint.get('accum_step', 0)  # Default to 0 for old checkpoints
     
-    return start_step
+    print(f"Resumed from step {checkpoint['step']} (continuing from step {start_step})")
+    if accum_step > 0:
+        print(f"Resuming mid-accumulation at accum_step {accum_step}")
+    
+    return start_step, accum_step
