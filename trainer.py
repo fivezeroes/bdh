@@ -59,7 +59,7 @@ class Trainer:
         self.first_checkpoint_saved = False
         self.loss_acc = 0
         self.loss_steps = 0
-        self.last_val_loss = None  # Track last validation loss for logging
+        self.last_val_loss: float | None = None  # Track last validation loss for logging
         
         # Gradient accumulation state
         self.gradient_accumulation_steps = config.training.gradient_accumulation_steps

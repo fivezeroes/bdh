@@ -88,7 +88,6 @@ def main():
     scaler = torch.amp.GradScaler('cuda', enabled=(dtype == "float16"))
     torch.manual_seed(1337)
     torch.backends.cuda.matmul.fp32_precision = 'tf32'
-    torch.backends.cudnn.fp32_precision = 'tf32'
 
     # Setup FP8 recipe if using Transformer Engine
     fp8_recipe = create_fp8_recipe(config) if config.low_precision.use_fp8 else None
