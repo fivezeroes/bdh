@@ -31,7 +31,7 @@ tensorboard:
   log_dir: "runs"  # Base directory for runs (contains checkpoints, logs, and TensorBoard events)
   log_gradients: true  # Log gradient histograms (can be expensive)
   log_weights: true  # Log weight histograms (can be expensive)
-  log_scheduler_state: false  # Log scheduler internals like T_max, last_epoch (can be expensive)
+  log_scheduler_state: true  # Log scheduler internals like T_max, last_epoch (can be expensive)
 
 # DataLoader Configuration
 dataloader:
@@ -70,10 +70,10 @@ dataset:
 #
 low_precision:
   use_fp8: false  # Set to true to use FP8 native compute (Hopper H100/Blackwell only)
-  use_4bit: true  # Set to true to enable 4-bit training preparation
+  use_4bit: false  # Set to true to enable 4-bit training preparation
   use_4bit_optimizer: false  # Set to true to use 4-bit optimizer (AdamW8bit)
   quantization_type: "nf4"  # "nf4" or "fp4" - nf4 is better for normally distributed weights
-  use_double_quant: true  # Use nested quantization for better compression
+  use_double_quant: false  # Use nested quantization for better compression
   compute_dtype: "bfloat16"  # Compute dtype: "bfloat16", "float16", or "float32"
 
 # FP8 Configuration (Hopper/Blackwell GPUs only)
