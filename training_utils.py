@@ -99,7 +99,7 @@ def eval_model(model, device, tokenizer=None, max_new_tokens=100, top_k=3):
     """
     model.eval()
 
-    prompt_text = "The Capital of France is "
+    prompt_text = "The capital of France is"
     
     # Encode prompt using tokenizer
     if tokenizer is not None:
@@ -222,6 +222,19 @@ def load_checkpoint(checkpoint_path, model, optimizer, scaler, dtype, device, sc
     if scheduler is not None and checkpoint.get('scheduler_state_dict') is not None:
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         print(f"Scheduler state loaded")
+        
+        # Fix threshold if it was loaded as a string (YAML parsing issue in old configs)
+        if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+            if isinstance(scheduler.threshold, str):
+                scheduler.threshold = float(scheduler.threshold)
+                print(f"Fixed scheduler threshold from string to float: {scheduler.threshold}")
+        elif isinstance(scheduler, torch.optim.lr_scheduler.SequentialLR):
+            # Check if any wrapped scheduler is ReduceLROnPlateau with string threshold
+            for sched in scheduler._schedulers:
+                if isinstance(sched, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    if isinstance(sched.threshold, str):
+                        sched.threshold = float(sched.threshold)
+                        print(f"Fixed wrapped scheduler threshold from string to float: {sched.threshold}")
     
     start_step = checkpoint['step'] + 1
     accum_step = checkpoint.get('accum_step', 0)  # Default to 0 for old checkpoints
