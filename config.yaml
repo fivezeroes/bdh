@@ -171,4 +171,4 @@ scheduler:
   gamma: 0.95  # Exponential decay factor (LR *= gamma each step)
   patience: 10  # Plateau: evaluations without improvement before reducing LR
   factor: 0.1  # Plateau: factor to reduce LR by (new_lr = lr * factor)
-  threshold: 1e-4  # Plateau: minimum change to count as improvement
+  threshold: 1.0e-4  # Plateau: minimum change to count as improvement
