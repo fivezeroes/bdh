@@ -60,6 +60,20 @@ pip install -r requirements.txt
 python train.py
 ```
 
+Development with a local virtual environment (recommended):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Run tests
+python3 -m pytest -q
+
+# Train
+python train.py
+```
+
 ### Training Monitoring with TensorBoard
 
 BDH includes built-in TensorBoard support for visualizing training metrics in real-time:
@@ -130,7 +144,7 @@ After training, you can load a checkpoint and prompt the model:
 python prompt.py runs/run_20251115_143022/checkpoint_1000.pt
 
 # Single prompt mode
-python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "The Capital of France is"
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "The capital of France is"
 
 # Customize generation parameters
 python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "Once upon a time" --max-tokens 200 --top-k 5 --temperature 0.8

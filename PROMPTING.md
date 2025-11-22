@@ -22,7 +22,7 @@ This launches an interactive session where you can:
 Generate text from a single prompt and exit:
 
 ```bash
-python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "The Capital of France is"
+python prompt.py runs/run_20251115_143022/checkpoint_1000.pt --prompt "The capital of France is"
 ```
 
 ## Generation Parameters

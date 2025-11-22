@@ -35,6 +35,7 @@ class TrainingConfig:
     runs_dir: str = "runs"
     resume_from_checkpoint: Optional[str] = None
     debug: bool = False
+    compile_model: bool = True  # Use torch.compile() for model compilation (disable for MPS compatibility)
 
 
 @dataclass

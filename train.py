@@ -158,7 +158,16 @@ def main():
     if config.low_precision.use_4bit:
         model = prepare_model_for_4bit_training(model, config)
     
-    model = torch.compile(model)
+    # Compile model if enabled and compatible with device
+    # Note: MPS backend has limited threadgroup memory and may fail with torch.compile
+    if config.training.compile_model:
+        if device.type == "mps":
+            print("Warning: torch.compile() on MPS may cause memory errors. Consider setting compile_model: false in config.")
+            print("Attempting compilation anyway...")
+        model = torch.compile(model)
+        print("Model compiled with torch.compile()")
+    else:
+        print("Model compilation disabled (running in eager mode)")
     
     # Create optimizer with optional 4-bit support
     optimizer = create_optimizer(model, config)
@@ -176,7 +185,7 @@ def main():
     trainer = Trainer(model, optimizer, config, device, dtype, scaler, fp8_recipe, run_dir=run_dir, scheduler=scheduler)
 
     # Resume from checkpoint if specified
-    start_step = 0
+    start_step = 1
     if config.training.resume_from_checkpoint is not None:
         start_step, accum_step = load_checkpoint(
             config.training.resume_from_checkpoint, 
@@ -207,6 +216,10 @@ def main():
             # Execute training step
             loss = trainer.train_step(x, y)
             trainer.update_loss_accumulator(loss)
+
+            # Logging
+            if trainer.should_log(step):
+                trainer.log_progress(step, config.training.max_iters)
             
             # Step scheduler after optimizer step (respects gradient accumulation)
             # Only step when optimizer actually stepped (accum_step == 0 after step)
@@ -221,10 +234,6 @@ def main():
                     print(f"Validation loss: {val_loss:.4f}")
                 
                 trainer.scheduler_step(val_loss)
-            
-            # Logging
-            if trainer.should_log(step):
-                trainer.log_progress(step, config.training.max_iters)
             
             # Checkpointing
             if trainer.should_checkpoint(step):

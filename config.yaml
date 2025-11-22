@@ -24,6 +24,7 @@ training:
   runs_dir: "runs"
   resume_from_checkpoint: null #"runs/run_20251115_123456/checkpoint_1500.pt"  # Set to checkpoint path to resume
   debug: false
+  compile_model: true  # Set to false for MPS compatibility (avoids threadgroup memory errors)
 
 # TensorBoard Configuration
 tensorboard:
