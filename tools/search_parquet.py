@@ -3,9 +3,10 @@
 search_parquet.py - Search parquet files for text matches.
 
 Usage examples:
-  python search_parquet.py --dir /mnt/scratch/data --pattern "openai" --context 40
+    python search_parquet.py --dir /mnt/scratch/data --pattern "openai" --context 40
   python search_parquet.py --dir /mnt/scratch/data --pattern "OpenAI" --regex --case-sensitive
   python search_parquet.py --files "data/*.parquet" --pattern "http" --summary
+    python search_parquet.py --files "data/*.parquet" --pattern "foo" --filter "language==en" --filter "score<0.6"
 """
 
 import argparse
@@ -13,7 +14,7 @@ import re
 import os
 import glob
 import sys
-from typing import List, Iterable, Tuple, Dict, Any
+from typing import List, Iterable, Tuple, Dict, Any, Optional
 import pyarrow.parquet as pq
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -68,12 +69,17 @@ def _search_in_text(text: str, pattern: str, regex: bool, case_sensitive: bool) 
         return results
 
 
-def _search_file(file_path: str, pattern: str, regex: bool, case_sensitive: bool, columns: List[str], context: int, max_matches_per_file: int) -> Dict[str, Any]:
+def _search_file(file_path: str, pattern: str, regex: bool, case_sensitive: bool, columns: List[str], context: int, max_matches_per_file: int, filters: Optional[List[Dict]] = None) -> Dict[str, Any]:
+    # Backwards-compatible signature, filter logic may be added later
     results = []
     try:
         pf = pq.ParquetFile(file_path)
     except Exception as e:
         return {"file": file_path, "error": str(e), "matches": []}
+
+    # Filters is a list of dicts with keys: col, op, val, is_num
+    if filters is None:
+        filters = []
 
     # Count through row groups to compute a global row index
     row_group_counts = [pf.metadata.row_group(i).num_rows for i in range(pf.num_row_groups)]
@@ -82,25 +88,123 @@ def _search_file(file_path: str, pattern: str, regex: bool, case_sensitive: bool
         cum_counts.append(cum_counts[-1] + n)
 
     matches_found = 0
+    # Determine all columns we need to read: search columns + filter columns
+    filter_cols = {f['col'] for f in filters}
+    read_cols = list(dict.fromkeys(columns + list(filter_cols)))  # preserve order and unique
+
     for rg in range(pf.num_row_groups):
         try:
-            table = pf.read_row_group(rg, columns=columns)
+            table = pf.read_row_group(rg, columns=read_cols)
         except Exception:
             # try reading whole table
             try:
-                table = pf.read(columns=columns)
+                table = pf.read(columns=read_cols)
             except Exception:
                 continue
-
-        # If multiple columns are specified, search them each and record column name
-        for col in columns:
+        # Convert needed columns to Python lists for row-wise access
+        col_lists = {}
+        for col in read_cols:
             if col not in table.column_names:
+                col_lists[col] = None
                 continue
-            pylist = table.column(col).to_pylist()
-            for local_idx, text in enumerate(pylist):
+            col_lists[col] = table.column(col).to_pylist()
+
+        # row-wise iteration to apply filters
+        # find number of rows in this row group: pick one non-None column list to determine length
+        num_rows = 0
+        for l in col_lists.values():
+            if l is not None:
+                num_rows = len(l)
+                break
+        if num_rows == 0:
+            continue
+
+        def _value_matches_filter(value, f):
+            op = f['op']
+            expected = f['val']
+            is_num = f['is_num']
+
+            # Handle None expected
+            if expected is None:
+                if op == '==':
+                    return value is None
+                if op == '!=':
+                    return value is not None
+                # other ops don't make sense with None
+                return False
+
+            # If value is None and expected is not None -> mismatch
+            if value is None:
+                return False
+
+            # numeric comparison if expected was numeric
+            if is_num:
+                try:
+                    val_num = float(value)
+                except Exception:
+                    return False
+                if op == '==':
+                    return val_num == float(expected)
+                if op == '!=':
+                    return val_num != float(expected)
+                if op == '<=':
+                    return val_num <= float(expected)
+                if op == '>=':
+                    return val_num >= float(expected)
+                if op == '<':
+                    return val_num < float(expected)
+                if op == '>':
+                    return val_num > float(expected)
+                return False
+
+            # string comparison (respect case sensitivity flag)
+            try:
+                val_str = str(value)
+            except Exception:
+                return False
+            exp_str = str(expected)
+            if not case_sensitive:
+                val_str = val_str.lower()
+                exp_str = exp_str.lower()
+
+            if op == '==':
+                return val_str == exp_str
+            if op == '!=':
+                return val_str != exp_str
+            # lexicographic compare for <, > with strings
+            if op == '<=':
+                return val_str <= exp_str
+            if op == '>=':
+                return val_str >= exp_str
+            if op == '<':
+                return val_str < exp_str
+            if op == '>':
+                return val_str > exp_str
+            return False
+
+        # Now iterate rows
+        for local_idx in range(num_rows):
+            # Evaluate filters first
+            match_filters = True
+            for f in filters:
+                col = f['col']
+                if col not in col_lists or col_lists[col] is None:
+                    match_filters = False
+                    break
+                value = col_lists[col][local_idx]
+                if not _value_matches_filter(value, f):
+                    match_filters = False
+                    break
+            if not match_filters:
+                continue
+
+            # Search only in the columns specified by 'columns'
+            for col in columns:
+                if col not in col_lists or col_lists[col] is None:
+                    continue
+                text = col_lists[col][local_idx]
                 if text is None:
                     continue
-                # Convert non-string text to str
                 if not isinstance(text, str):
                     text = str(text)
 
@@ -128,10 +232,11 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dir", "-d", help="Directory that contains parquet files")
     group.add_argument("--files", "-f", help="Glob for parquet files, e.g. 'data/*.parquet'")
-    parser.add_argument("--pattern", "-p", required=True, help="Search pattern (plain text or regex if --regex)")
+    parser.add_argument("--pattern", "-p", required=False, default=None, help="Search pattern (plain text or regex if --regex). If omitted, rows matching filters will be shown.")
     parser.add_argument("--regex", action="store_true", help="Interpret --pattern as a regex")
     parser.add_argument("--case-sensitive", action="store_true", help="Make search case-sensitive (default: false)")
     parser.add_argument("--cols", default="text", help="Comma-separated columns to search (default: 'text')")
+    parser.add_argument("--filter", "-F", action="append", default=[], help="Filter expression(s) to restrict rows, e.g. 'language==en' or 'score<0.6' (can be used multiple times)")
     parser.add_argument("--context", "-c", type=int, default=40, help="Characters of context to show around match")
     parser.add_argument("--max-per-file", type=int, default=10, help="Max number of matches to show per file (0 = unlimited)")
     parser.add_argument("--summary", action="store_true", help="Only show counts (file and number of matches)")
@@ -146,11 +251,58 @@ def main():
 
     cols = [c.strip() for c in args.cols.split(",") if c.strip()]
 
+    # parse filters; they will be a list of strings like 'language==en'
+    filters_raw = args.filter
+
+    def parse_filter_str(s: str):
+        # Supports operators: == != <= >= < >
+        for op in ['==', '!=', '<=', '>=', '<', '>']:
+            if op in s:
+                parts = s.split(op)
+                if len(parts) != 2:
+                    raise ValueError(f"Invalid filter: {s}")
+                col = parts[0].strip()
+                val = parts[1].strip()
+                # try to coerce value to number if possible
+                is_num = False
+                coerced_val = val
+                if val.lower() == 'none' or val.lower() == 'null':
+                    coerced_val = None
+                else:
+                    try:
+                        coerced_val = float(val)
+                        is_num = True
+                    except Exception:
+                        # strip surrounding quotes if present
+                        if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+                            coerced_val = val[1:-1]
+                        else:
+                            coerced_val = val
+                return {'col': col, 'op': op, 'val': coerced_val, 'is_num': is_num}
+        raise ValueError(f"Invalid filter, must contain a comparison operator: {s}")
+
+    filters = []
+    for f in filters_raw:
+        if f:
+            try:
+                filters.append(parse_filter_str(f))
+            except ValueError as e:
+                print(f"Error parsing filter '{f}': {e}")
+                return
+
+    if args.verbose and filters:
+        print(f"Applying filters: {filters}")
+
+    # Validate regex/pattern usage
+    if args.regex and not args.pattern:
+        print("Error: --regex requires --pattern to be provided")
+        return
+
     if args.workers and args.workers > 1:
         results = []
         with ProcessPoolExecutor(max_workers=args.workers) as ex:
             futures = {
-                ex.submit(_search_file, fpath, args.pattern, args.regex, args.case_sensitive, cols, args.context, args.max_per_file): fpath
+                ex.submit(_search_file, fpath, args.pattern, args.regex, args.case_sensitive, cols, args.context, args.max_per_file, filters): fpath
                 for fpath in files
             }
             for fut in as_completed(futures):
@@ -159,7 +311,7 @@ def main():
                 except Exception as e:
                     results.append({"file": futures[fut], "error": str(e), "matches": []})
     else:
-        results = [ _search_file(fpath, args.pattern, args.regex, args.case_sensitive, cols, args.context, args.max_per_file) for fpath in files ]
+        results = [ _search_file(fpath, args.pattern, args.regex, args.case_sensitive, cols, args.context, args.max_per_file, filters) for fpath in files ]
 
     total = 0
     for r in results:
