@@ -4,35 +4,97 @@
 
 import glob
 import os
-from typing import Optional
+from typing import Optional, Iterable
 
 import numpy as np
-import pyarrow.parquet as pq
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
+import pyarrow.parquet as pq
 
 
-class ParquetDataset(Dataset):
-    """Dataset class for efficient parquet file loading with PyTorch DataLoader."""
-    
+def _encode_text_to_tokens(text, tokenizer, block_size):
+    """Encode text into token arrays (x, y) of length block_size and block_size.
+
+    This mirrors the previous `ParquetDataset` behavior: tokens are truncated or
+    padded to block_size + 1, then converted to x (first block_size tokens) and
+    y (tokens 1..block_size + 1).
+    """
+    if text is None:
+        text = ""
+    if isinstance(text, (bytes, bytearray)):
+        try:
+            text = text.decode("utf-8", errors="ignore")
+        except Exception:
+            text = ""
+
+    # Tokenize text
+    if tokenizer is not None:
+        token_ids = tokenizer.encode(text)
+    else:
+        token_ids = list(text.encode("utf-8", errors="ignore"))
+
+    # Ensure at least one token
+    if not token_ids:
+        if tokenizer is not None:
+            pad_id = (
+                tokenizer.pad_token_id
+                if getattr(tokenizer, "pad_token_id", None) is not None
+                else tokenizer.eos_token_id
+                if getattr(tokenizer, "eos_token_id", None) is not None
+                else 0
+            )
+        else:
+            pad_id = 0
+        token_ids = [pad_id]
+
+    # Truncate or pad so we have exactly block_size + 1 length
+    target_len = block_size + 1
+    if len(token_ids) >= target_len:
+        seq_tokens = token_ids[:target_len]
+    else:
+        if tokenizer is not None:
+            pad_id = (
+                tokenizer.pad_token_id
+                if getattr(tokenizer, "pad_token_id", None) is not None
+                else tokenizer.eos_token_id
+                if getattr(tokenizer, "eos_token_id", None) is not None
+                else 0
+            )
+        else:
+            pad_id = 0
+        seq_tokens = token_ids + [pad_id] * (target_len - len(token_ids))
+
+    seq_array = np.array(seq_tokens, dtype=np.int64)
+    x = seq_array[:block_size]
+    y = seq_array[1 : block_size + 1]
+    return x, y
+
+
+# _local_path_to_url removed; not needed for PyTorch-based loader
+
+
+class ParquetDataset(torch.utils.data.Dataset):
+    """Dataset that reads rows from a set of Parquet files using pyarrow.
+
+    This is a minimal replacement for the custom loader previously used.
+    It supports precomputed file_lengths so the main process can index once and
+    worker processes avoid re-indexing.
+    """
     def __init__(self, parquet_files, block_size=512, tokenizer=None, file_lengths=None):
         self.parquet_files = parquet_files
         self.block_size = block_size
-        self.tokenizer = tokenizer  # Tokenizer instance for encoding text
-        
-        # Pre-compute total number of samples
+        self.tokenizer = tokenizer
+
         if file_lengths is not None:
-            # Use pre-computed file lengths (avoids re-indexing in worker processes)
             self.file_lengths = file_lengths
             self.cumulative_lengths = [0]
             for length in file_lengths:
                 self.cumulative_lengths.append(self.cumulative_lengths[-1] + length)
             self.total_length = self.cumulative_lengths[-1]
         else:
-            # Index files (only done once in main process)
+            # Index files and compute number of rows per file
             self.file_lengths = []
             self.cumulative_lengths = [0]
-            
             print(f"Indexing {len(parquet_files)} parquet files...")
             for i, file_path in enumerate(parquet_files):
                 pf = pq.ParquetFile(file_path)
@@ -41,82 +103,52 @@ class ParquetDataset(Dataset):
                 self.cumulative_lengths.append(self.cumulative_lengths[-1] + num_rows)
                 if (i + 1) % 100 == 0:
                     print(f"  Indexed {i + 1}/{len(parquet_files)} files...")
-            
             self.total_length = self.cumulative_lengths[-1]
             print(f"Dataset indexed: {self.total_length:,} total samples across {len(parquet_files)} files")
-    
+
     def __len__(self):
         return self.total_length
-    
+
     def __getitem__(self, idx):
-        # Find which file this index belongs to
+        # Locate file index using cumulative lengths
         file_idx = 0
         for i, cum_len in enumerate(self.cumulative_lengths[1:]):
             if idx < cum_len:
                 file_idx = i
                 break
-        
+
         local_idx = idx - self.cumulative_lengths[file_idx]
         file_path = self.parquet_files[file_idx]
-        
-        # Read the row
+
         pf = pq.ParquetFile(file_path)
-        row_group_idx = local_idx // 10000
-        local_row_idx = local_idx % 10000
-        
+        # Find row group containing local_idx
+        row_group_idx = 0
+        rows_before = 0
+        for rg_idx in range(pf.metadata.num_row_groups):
+            rg_rows = pf.metadata.row_group(rg_idx).num_rows
+            if rows_before + rg_rows > local_idx:
+                row_group_idx = rg_idx
+                local_row_idx = local_idx - rows_before
+                break
+            rows_before += rg_rows
+        else:
+            # fallback
+            row_group_idx = pf.metadata.num_row_groups - 1
+            local_row_idx = 0
+
         try:
             table = pf.read_row_group(row_group_idx, columns=['text'])
             if local_row_idx < len(table):
                 text = table.column('text')[local_row_idx].as_py()
             else:
-                # Fallback to first row if index is out of bounds
                 text = table.column('text')[0].as_py()
         except Exception as e:
-            # Fallback for any read errors
+            print(f"Error reading file {file_path}: {e}")
             text = ""
-        
-        if text is None:
-            text = ""
-        
-        # Tokenize text
-        if self.tokenizer is not None:
-            token_ids = self.tokenizer.encode(text)
-        else:
-            # Fallback to byte-level encoding if no tokenizer provided
-            text_bytes = text.encode('utf-8', errors='ignore')
-            token_ids = list(text_bytes)
-        
-        # Handle empty token_ids (empty text)
-        if not token_ids:
-            # Use pad token for empty sequences
-            if self.tokenizer is not None:
-                pad_id = (self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None 
-                         else self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None 
-                         else 0)
-            else:
-                pad_id = 0
-            token_ids = [pad_id]
-        
-        # Sample a random sequence
-        if len(token_ids) > self.block_size + 1:
-            start_idx = int(torch.randint(len(token_ids) - self.block_size - 1, (1,)).item())
-            seq_tokens = token_ids[start_idx:start_idx + self.block_size + 1]
-        else:
-            # Pad if sequence is too short
-            if self.tokenizer is not None:
-                # Use pad token if available, otherwise use eos token, otherwise use 0
-                pad_id = (self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None 
-                         else self.tokenizer.eos_token_id if self.tokenizer.eos_token_id is not None 
-                         else 0)
-            else:
-                pad_id = 0
-            seq_tokens = token_ids + [pad_id] * (self.block_size + 1 - len(token_ids))
-        
-        # Convert to tensors
-        seq_array = np.array(seq_tokens, dtype=np.int64)
-        x = torch.from_numpy(seq_array[:self.block_size])
-        y = torch.from_numpy(seq_array[1:self.block_size + 1])
-        
+
+        x_arr, y_arr = _encode_text_to_tokens(text, self.tokenizer, self.block_size)
+        x = torch.from_numpy(x_arr)
+        y = torch.from_numpy(y_arr)
         return x, y
 
 
@@ -162,146 +194,31 @@ def split_parquet_files(parquet_files, train_ratio=0.9):
     return train_files, test_files
 
 
-class ParquetFileCache:
-    """Cache for opened parquet files to avoid repeated file opening."""
-    
-    def __init__(self, max_cached_files=100):
-        self.cache = {}
-        self.max_cached_files = max_cached_files
-    
-    def get(self, file_path):
-        """Get or open a parquet file, with caching."""
-        if file_path not in self.cache:
-            # If cache is full, remove oldest entry
-            if len(self.cache) >= self.max_cached_files:
-                self.cache.pop(next(iter(self.cache)))
-            
-            self.cache[file_path] = pq.ParquetFile(file_path)
-        
-        return self.cache[file_path]
-    
-    def clear(self):
-        """Clear the cache."""
-        self.cache.clear()
+def create_parquet_dataloader(
+    parquet_files: Iterable[str],
+    tokenizer,
+    block_size: int,
+    batch_size: int,
+    num_workers: int = 4,
+    shuffle: bool = True,
+    pin_memory: bool = True,
+    drop_last: bool = False,
+    file_lengths: Optional[Iterable[int]] = None,
+):
+    """Create a PyTorch DataLoader wrapping ParquetDataset.
 
-
-def get_batch(parquet_files, batch_size, block_size, device, file_cache=None, tokenizer=None, debug=False):
+    Parameters are intentionally minimal to keep the wrapper small.
     """
-    Get a batch by randomly sampling from parquet files.
-    
-    Args:
-        parquet_files: List of parquet files to sample from
-        batch_size: Number of samples in batch
-        block_size: Size of each sequence block
-        device: Device to place tensors on
-        file_cache: Optional ParquetFileCache instance
-        tokenizer: Optional tokenizer for encoding text
-        debug: If True, print debug information
-        
-    Returns:
-        Tuple of (x, y) tensors
-    """
-    if not parquet_files:
-        raise ValueError("No parquet files available")
-    
-    # Create temporary cache if none provided
-    if file_cache is None:
-        file_cache = ParquetFileCache()
-    
-    # Collect batch samples
-    x_list = []
-    y_list = []
-    
-    for _ in range(batch_size):
-        # Randomly select a parquet file
-        file_idx = int(torch.randint(len(parquet_files), (1,)).item())
-        file_path = parquet_files[file_idx]
-        pf = file_cache.get(file_path)
-        
-        # Randomly select a row from the file
-        num_rows = pf.metadata.num_rows
-        row_idx = int(torch.randint(num_rows, (1,)).item())
-        
-        # Read the specific row
-        table = pf.read_row_group(row_idx // 10000, columns=['text'])
-        local_idx = row_idx % 10000
-        if local_idx < len(table):
-            text = table.column('text')[local_idx].as_py()
-        else:
-            # Fallback: read a different row group
-            table = pf.read_row_group(0, columns=['text'])
-            text = table.column('text')[0].as_py()
-        
-        if text is None:
-            text = ""
-        
-        # Tokenize text
-        if tokenizer is not None:
-            token_ids = tokenizer.encode(text)
-        else:
-            # Fallback to byte-level encoding if no tokenizer provided
-            text_bytes = text.encode('utf-8', errors='ignore')
-            token_ids = list(text_bytes)
-        
-        # Handle empty token_ids (empty text)
-        if not token_ids:
-            # Use pad token for empty sequences
-            if tokenizer is not None:
-                pad_id = (tokenizer.pad_token_id if tokenizer.pad_token_id is not None 
-                         else tokenizer.eos_token_id if tokenizer.eos_token_id is not None 
-                         else 0)
-            else:
-                pad_id = 0
-            token_ids = [pad_id]
-        
-        # Sample a random sequence of block_size from this text
-        if len(token_ids) > block_size + 1:
-            start_idx = int(torch.randint(len(token_ids) - block_size - 1, (1,)).item())
-            seq_tokens = token_ids[start_idx:start_idx + block_size + 1]
-        else:
-            # Pad if sequence is too short
-            if tokenizer is not None:
-                # Use pad token if available, otherwise use eos token, otherwise use 0
-                pad_id = (tokenizer.pad_token_id if tokenizer.pad_token_id is not None 
-                         else tokenizer.eos_token_id if tokenizer.eos_token_id is not None 
-                         else 0)
-            else:
-                pad_id = 0
-            seq_tokens = token_ids + [pad_id] * (block_size + 1 - len(token_ids))
-        
-        # Convert to tensors
-        seq_array = np.array(seq_tokens, dtype=np.int64)
-        x_list.append(torch.from_numpy(seq_array[:block_size]))
-        y_list.append(torch.from_numpy(seq_array[1:block_size + 1]))
-    
-    x = torch.stack(x_list)
-    y = torch.stack(y_list)
+    dataset = ParquetDataset(parquet_files, block_size=block_size, tokenizer=tokenizer, file_lengths=file_lengths)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=max(1, num_workers),
+        pin_memory=pin_memory,
+        persistent_workers=True if num_workers > 0 else False,
+        drop_last=drop_last,
+    )
 
-    if debug:
-        print("x:")
-        for i in range(len(x)):
-            if tokenizer is not None:
-                print(tokenizer.decode(x[i].tolist()))
-            else:
-                for j in range(len(x[i])):
-                    print(f"{chr(int(x[i][j].item()))}", end="")
-                print()
 
-        print("y:")
-        for i in range(len(y)):
-            if tokenizer is not None:
-                print(tokenizer.decode(y[i].tolist()))
-            else:
-                for j in range(len(y[i])):
-                    print(f"{chr(int(y[i][j].item()))}", end="")
-                print()
-        input("Press the <ENTER> key to continue...")
-    
-    if torch.cuda.is_available():
-        x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(
-            device, non_blocking=True
-        )
-    else:
-        x, y = x.to(device), y.to(device)
-    
-    return x, y
+

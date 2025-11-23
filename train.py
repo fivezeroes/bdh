@@ -11,13 +11,12 @@ os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 import bdh
 import config as cfg
 import torch
-from torch.utils.data import DataLoader
 
 # Import tokenizer support
 from tokenizers import create_tokenizer
 
 # Import refactored modules
-from data import ParquetDataset, fetch_parquet_files, split_parquet_files
+from data import fetch_parquet_files, split_parquet_files, ParquetDataset, create_parquet_dataloader
 from optimization import (
     check_low_precision_requirements,
     create_fp8_recipe,
@@ -110,45 +109,34 @@ def main():
     check_low_precision_requirements(config, device)
     
     # Create datasets and dataloaders
-    # Index files once in main process to avoid repeated indexing in workers
-    print(f"Pre-indexing dataset in main process...")
+    # Create PyArrow-backed datasets and PyTorch dataloaders
+    print("Creating Parquet datasets and DataLoaders...")
+    # Pre-index in main process to avoid repeated indexing in workers
     temp_dataset = ParquetDataset(train_files, config.training.block_size, tokenizer=tokenizer)
     file_lengths = temp_dataset.file_lengths
-    
-    # Create actual dataset with pre-computed file lengths
-    train_dataset = ParquetDataset(
-        train_files, 
-        config.training.block_size, 
+
+    train_loader = create_parquet_dataloader(
+        train_files,
         tokenizer=tokenizer,
-        file_lengths=file_lengths
-    )
-    
-    train_loader = DataLoader(
-        train_dataset,
+        block_size=config.training.block_size,
         batch_size=config.training.batch_size,
+        num_workers=config.dataloader.num_workers,
         shuffle=True,
-        num_workers=config.dataloader.num_workers,
         pin_memory=config.dataloader.pin_memory,
-        persistent_workers=True,  # Keep workers alive between epochs
-        prefetch_factor=config.dataloader.prefetch_factor,  # Prefetch batches per worker
+        drop_last=False,
+        file_lengths=file_lengths,
     )
-    
-    # Create validation dataset and loader
-    print(f"Creating validation dataset...")
-    val_dataset = ParquetDataset(
+
+    val_loader = create_parquet_dataloader(
         test_files,
-        config.training.block_size,
-        tokenizer=tokenizer
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
+        tokenizer=tokenizer,
+        block_size=config.training.block_size,
         batch_size=config.training.batch_size,
-        shuffle=False,  # No need to shuffle validation data
         num_workers=config.dataloader.num_workers,
+        shuffle=False,
         pin_memory=config.dataloader.pin_memory,
-        persistent_workers=True,
-        prefetch_factor=config.dataloader.prefetch_factor,
+        drop_last=False,
+        file_lengths=None,
     )
 
     # Create and prepare model
@@ -198,10 +186,9 @@ def main():
         )
         trainer.set_accum_state(accum_step)
 
-    # Training loop with DataLoader
-    train_iter = iter(train_loader)
+    # Training loop using torch DataLoader
     loss = None  # Initialize for final checkpoint
-    
+    train_iter = iter(train_loader)
     try:
         for step in range(start_step, config.training.max_iters):
             # Get next batch from DataLoader
@@ -210,7 +197,7 @@ def main():
             except StopIteration:
                 train_iter = iter(train_loader)
                 x, y = next(train_iter)
-            
+
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             
             # Execute training step
@@ -261,9 +248,6 @@ def main():
         trainer.close()
         # Restore stdout/stderr and close log files
         teardown_logging(loggers)
-
-    print("Training done, now generating a sample")
-    eval_model(model, device, tokenizer=tokenizer)
     
     # Save final checkpoint
     final_loss = loss.item() if loss is not None else 0.0
